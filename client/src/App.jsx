@@ -12,6 +12,8 @@ function App() {
   const [brushSoftness, setBrushSoftness] = useState(0);
   const [brushOpacity, setBrushOpacity] = useState(100);
   const [uploadRemaining, setUploadRemaining] = useState(2);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
@@ -24,6 +26,8 @@ function App() {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
+  const [longPressImage, setLongPressImage] = useState(null);
+  const [uploadMessage, setUploadMessage] = useState('');
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -31,6 +35,7 @@ function App() {
   const canvasSize = 5000;
   const panStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   const touchStartRef = useRef({ distance: 0, scale: 1, centerX: 0, centerY: 0, offsetX: 0, offsetY: 0, twoFinger: false });
+  const longPressTimerRef = useRef(null);
 
   useEffect(() => {
     fetchImages();
@@ -84,38 +89,71 @@ function App() {
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert('图片大小不能超过2MB');
+    if (file.size > 10 * 1024 * 1024) {
+      alert('图片大小不能超过10MB');
       return;
     }
     if (uploadRemaining <= 0) {
       alert('今日上传次数已用完');
       return;
     }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadMessage('');
+
     const formData = new FormData();
     formData.append('image', file);
+
     try {
-      const res = await fetch(`${API_URL}/api/upload`, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include'
-      });
-      const data = await res.json();
-      if (data.success) {
-        fetchImages();
-        fetchUploadStatus();
-        alert('上传成功');
-      } else {
-        alert(data.error || '上传失败');
-      }
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}/api/upload`);
+      xhr.withCredentials = true;
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          setUploadProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        setIsUploading(false);
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (data.success) {
+            fetchImages();
+            fetchUploadStatus();
+            setUploadMessage('上传成功！');
+            setTimeout(() => setUploadMessage(''), 2000);
+          } else {
+            alert(data.error || '上传失败');
+          }
+        } catch (err) {
+          alert('上传失败');
+        }
+      };
+
+      xhr.onerror = () => {
+        setIsUploading(false);
+        alert('上传失败，请检查网络');
+      };
+
+      xhr.onabort = () => {
+        setIsUploading(false);
+      };
+
+      xhr.send(formData);
+      e.target.value = '';
     } catch (err) {
       console.error('Upload failed:', err);
+      setIsUploading(false);
       alert('上传失败');
     }
   };
 
   const getCanvasCoords = useCallback((clientX, clientY) => {
-    if (!canvasRef.current || !containerRef.current) return { x: 0, y: 0 };
+    if (!canvasRef.current) return { x: 0, y: 0 };
     const canvasRect = canvasRef.current.getBoundingClientRect();
     const relX = (clientX - canvasRect.left) / scale;
     const relY = (clientY - canvasRect.top) / scale;
@@ -164,8 +202,6 @@ function App() {
   }, [brushColor, brushSize, brushSoftness, brushOpacity, canvasSize, lastSaveTime]);
 
   const handleMouseDown = (e) => {
-    e.preventDefault();
-
     if (e.button === 1 || e.button === 2) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y };
@@ -255,9 +291,12 @@ function App() {
   };
 
   const handleTouchStart = (e) => {
-    e.preventDefault();
-
     if (e.touches.length === 2) {
+      e.preventDefault();
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const center = getTouchCenter(t1, t2);
@@ -275,6 +314,7 @@ function App() {
       };
       setIsPanning(true);
       setIsDrawing(false);
+      setDragImage(null);
     } else if (e.touches.length === 1 && !touchStartRef.current.twoFinger) {
       const touch = e.touches[0];
       const coords = getCanvasCoords(touch.clientX, touch.clientY);
@@ -295,10 +335,9 @@ function App() {
   };
 
   const handleTouchMove = (e) => {
-    e.preventDefault();
-
     if (e.touches.length === 2 || touchStartRef.current.twoFinger) {
       if (e.touches.length === 2) {
+        e.preventDefault();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
         const newDistance = getTouchDistance(t1, t2);
@@ -374,26 +413,88 @@ function App() {
     }
   };
 
-  const handleImageClick = (e, image) => {
+  const handleImageMouseDown = (e, image) => {
     e.stopPropagation();
+    e.preventDefault();
     if (isAdmin) {
       if (selectedImages.includes(image.id)) {
         setSelectedImages(prev => prev.filter(id => id !== image.id));
       } else {
         setSelectedImages(prev => [...prev, image.id]);
       }
-    } else {
-      let clientX, clientY;
-      if (e.touches && e.touches.length > 0) {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
+      return;
+    }
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+    setDragImage(image);
+    setDragOffset({ x: x - image.x, y: y - image.y });
+  };
+
+  const handleImageMouseMove = (e, image) => {
+    if (!dragImage || dragImage.id !== image.id) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+    const newX = Math.max(0, Math.min(canvasSize - image.width, x - dragOffset.x));
+    const newY = Math.max(0, Math.min(canvasSize - image.height, y - dragOffset.y));
+    setImages(prev => prev.map(img =>
+      img.id === image.id ? { ...img, x: newX, y: newY } : img
+    ));
+  };
+
+  const handleImageMouseUp = (e, image) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setDragImage(null);
+  };
+
+  const handleImageTouchStart = (e, image) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isAdmin) {
+      if (selectedImages.includes(image.id)) {
+        setSelectedImages(prev => prev.filter(id => id !== image.id));
       } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
+        setSelectedImages(prev => [...prev, image.id]);
       }
-      const { x, y } = getCanvasCoords(clientX, clientY);
-      setDragImage(image);
-      setDragOffset({ x: x - image.x, y: y - image.y });
+      return;
+    }
+    const touch = e.touches[0];
+    const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
+    setDragImage(image);
+    setDragOffset({ x: x - image.x, y: y - image.y });
+  };
+
+  const handleImageTouchMove = (e, image) => {
+    if (!dragImage || dragImage.id !== image.id) return;
+    if (e.touches.length !== 1) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const touch = e.touches[0];
+    const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
+    const newX = Math.max(0, Math.min(canvasSize - image.width, x - dragOffset.x));
+    const newY = Math.max(0, Math.min(canvasSize - image.height, y - dragOffset.y));
+    setImages(prev => prev.map(img =>
+      img.id === image.id ? { ...img, x: newX, y: newY } : img
+    ));
+  };
+
+  const handleImageTouchEnd = (e, image) => {
+    e.stopPropagation();
+    setDragImage(null);
+  };
+
+  const handleDeleteImage = async (imageId) => {
+    if (!confirm('确定要删除这张图片吗？')) return;
+    try {
+      const res = await fetch(`${API_URL}/api/images/${imageId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchImages();
+      }
+    } catch (err) {
+      console.error('Delete failed:', err);
     }
   };
 
@@ -544,7 +645,7 @@ function App() {
               <div
                 key={img.id}
                 className={`absolute cursor-move border-2 transition-all ${
-                  selectedImages.includes(img.id) ? 'border-red-500' : 'border-transparent hover:border-tech-blue/50'
+                  selectedImages.includes(img.id) ? 'border-red-500' : 'border-transparent hover:border-blue-400/60'
                 }`}
                 style={{
                   left: img.x,
@@ -553,8 +654,17 @@ function App() {
                   height: img.height,
                   touchAction: 'none'
                 }}
-                onMouseDown={(e) => handleImageClick(e, img)}
-                onTouchStart={(e) => handleImageClick(e, img)}
+                onMouseDown={(e) => handleImageMouseDown(e, img)}
+                onMouseMove={(e) => handleImageMouseMove(e, img)}
+                onMouseUp={(e) => handleImageMouseUp(e, img)}
+                onMouseLeave={(e) => handleImageMouseUp(e, img)}
+                onTouchStart={(e) => handleImageTouchStart(e, img)}
+                onTouchMove={(e) => handleImageTouchMove(e, img)}
+                onTouchEnd={(e) => handleImageTouchEnd(e, img)}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteImage(img.id);
+                }}
               >
                 <img
                   src={getImageUrl(img.filename)}
@@ -562,6 +672,16 @@ function App() {
                   className="w-full h-full object-contain pointer-events-none"
                   draggable={false}
                 />
+                <button
+                  className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white text-sm rounded-full shadow-md hover:bg-red-600 z-10 flex items-center justify-center"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteImage(img.id);
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  ✕
+                </button>
                 {isAdmin && (
                   <div className="absolute top-0 left-0 bg-tech-dark/80 text-white text-xs px-1">
                     {new Date(img.upload_date).toLocaleString()}
@@ -581,8 +701,11 @@ function App() {
             onChange={handleImageUpload}
             className="hidden"
             id="upload-btn"
+            disabled={isUploading}
           />
-          <label htmlFor="upload-btn">📤 上传图片</label>
+          <label htmlFor="upload-btn">
+            {isUploading ? '上传中...' : '📤 上传图片'}
+          </label>
         </div>
         <span className="text-white/70 text-sm bg-tech-dark/50 px-3 py-1 rounded">
           今日剩余: {uploadRemaining}/2
@@ -681,9 +804,30 @@ function App() {
         </button>
       </div>
 
-      <div className="fixed bottom-4 right-4 z-50 text-xs text-white/40 bg-tech-dark/50 px-2 py-1 rounded">
-        左键画画 | 中键/右键移动 | 滚轮缩放 | 手机单指画画/双指移动缩放
+      <div className="fixed bottom-4 right-4 z-50 text-xs text-white/40 bg-tech-dark/50 px-2 py-1 rounded max-w-[300px] text-right">
+        左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放
       </div>
+
+      {isUploading && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[90]">
+          <div className="bg-tech-dark border border-tech-blue/50 rounded-xl p-6 w-80 text-center">
+            <h3 className="text-tech-blue font-semibold mb-4">正在上传...</h3>
+            <div className="w-full bg-white/10 rounded-full h-4 overflow-hidden">
+              <div
+                className="h-full bg-tech-blue transition-all duration-200"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+            <p className="text-white/70 mt-3 text-sm">{uploadProgress}%</p>
+          </div>
+        </div>
+      )}
+
+      {uploadMessage && (
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[95] bg-green-600 text-white px-6 py-3 rounded-xl font-semibold">
+          {uploadMessage}
+        </div>
+      )}
 
       {showDonation && (
         <div
@@ -722,6 +866,7 @@ function App() {
               onChange={(e) => setAdminPassword(e.target.value)}
               placeholder="输入管理员密码"
               className="w-full px-4 py-2 bg-white/10 border border-tech-blue/30 rounded-lg text-white mb-4 focus:outline-none focus:border-tech-blue"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
             />
             <div className="flex gap-2">
               <button className="flex-1 tech-button" onClick={handleAdminLogin}>登录</button>

@@ -21,7 +21,7 @@ try {
 const app = express();
 const port = process.env.PORT || 3001;
 
-const adminPassword = 'admin2026';
+const adminPassword = 'zhanxnk';
 
 const db = new sqlite3.Database(join(__dirname, 'canvas.db'), (err) => {
   if (err) {
@@ -58,7 +58,7 @@ const db = new sqlite3.Database(join(__dirname, 'canvas.db'), (err) => {
       db.get('SELECT * FROM settings WHERE key = ?', ['daily_limit'], (err, row) => {
         if (!row) {
           db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['daily_limit', '2']);
-          db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['max_size_mb', '2']);
+          db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['max_size_mb', '10']);
           db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['canvas_width', '20000']);
           db.run('INSERT INTO settings (key, value) VALUES (?, ?)', ['canvas_height', '20000']);
         }
@@ -77,7 +77,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -99,6 +99,20 @@ app.get('/api/images', (req, res) => {
       res.status(500).json({ error: err.message });
     } else {
       res.json(rows);
+    }
+  });
+});
+
+app.delete('/api/images/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: 'Invalid image id' });
+  }
+  db.run('DELETE FROM images WHERE id = ?', [id], (err) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.json({ success: true, deleted: this.changes });
     }
   });
 });
