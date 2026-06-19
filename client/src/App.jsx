@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
-const API_URL = window.location.hostname === 'localhost' || window.location.hostname === '10.73.82.39'
-  ? 'http://10.73.82.39:3001'
-  : 'https://YOUR_BACKEND_URL.railway.app';
+const API_URL = 'https://infinite-canvas-production-b078.up.railway.app';
 
 function App() {
   const [images, setImages] = useState([]);
