@@ -98,59 +98,97 @@ function App() {
       return;
     }
 
+    e.target.value = '';
+
+    // 先检测图片像素尺寸
+    const { width, height } = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+        img.onerror = () => resolve({ width: 400, height: 400 });
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => resolve({ width: 400, height: 400 });
+      reader.readAsDataURL(file);
+    });
+
     setIsUploading(true);
     setUploadProgress(0);
     setUploadMessage('');
 
     const formData = new FormData();
     formData.append('image', file);
+    formData.append('width', String(width));
+    formData.append('height', String(height));
 
     try {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_URL}/api/upload`);
-      xhr.withCredentials = true;
+      xhr.timeout = 60000;
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100);
+          const percent = Math.round((event.loaded / event.total) * 100;
           setUploadProgress(percent);
         }
       };
 
       xhr.onload = () => {
-        setIsUploading(false);
-        try {
-          const data = JSON.parse(xhr.responseText);
-          if (data.success) {
-            fetchImages();
-            fetchUploadStatus();
-            setUploadMessage('上传成功！');
-            setTimeout(() => setUploadMessage(''), 2000);
-          } else {
-            alert(data.error || '上传失败');
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.success) {
+              setUploadProgress(100);
+              setTimeout(() => {
+                setIsUploading(false);
+                fetchImages();
+                fetchUploadStatus();
+                setUploadMessage('上传成功！');
+                setTimeout(() => setUploadMessage(''), 2000);
+              }, 300);
+            } else {
+              setIsUploading(false);
+              alert(data.error || '上传失败');
+            }
+          } catch (err) {
+            setIsUploading(false);
+            alert('上传失败');
           }
-        } catch (err) {
-          alert('上传失败');
+        } else {
+          setIsUploading(false);
+          try {
+            const data = JSON.parse(xhr.responseText);
+            alert(data.error || '上传失败 (错误 ' + xhr.status + ')');
+          } catch (err) {
+            alert('上传失败 (错误 ' + xhr.status + ')');
+          }
         }
       };
 
       xhr.onerror = () => {
         setIsUploading(false);
-        alert('上传失败，请检查网络');
+        alert('上传失败，请检查网络连接');
+      };
+
+      xhr.ontimeout = () => {
+        setIsUploading(false);
+        alert('上传超时，请重试');
       };
 
       xhr.onabort = () => {
         setIsUploading(false);
       };
 
+      xhr.open('POST', API_URL + '/api/upload');
+      xhr.withCredentials = true;
       xhr.send(formData);
-      e.target.value = '';
     } catch (err) {
       console.error('Upload failed:', err);
       setIsUploading(false);
       alert('上传失败');
     }
   };
+
 
   const getCanvasCoords = useCallback((clientX, clientY) => {
     if (!canvasRef.current) return { x: 0, y: 0 };

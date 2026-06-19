@@ -169,6 +169,11 @@ app.post('/api/upload', (req, res) => {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
+      const imgWidth = parseInt(req.body.width) || 200;
+      const imgHeight = parseInt(req.body.height) || 200;
+      const displayWidth = Math.max(20, Math.floor(imgWidth / 2));
+      const displayHeight = Math.max(20, Math.floor(imgHeight / 2));
+
       const canvasWidth = await new Promise((resolve) => {
         db.get('SELECT value FROM settings WHERE key = ?', ['canvas_width'], (err, row) => {
           resolve(parseInt(row?.value || '20000'));
@@ -185,7 +190,7 @@ app.post('/api/upload', (req, res) => {
       const y = Math.floor(canvasHeight / 2);
 
       db.run('INSERT INTO images (filename, x, y, width, height, uploader_ip) VALUES (?, ?, ?, ?, ?, ?)',
-        [req.file.filename, x, y, 200, 200, ip], (err) => {
+        [req.file.filename, x, y, displayWidth, displayHeight, ip], (err) => {
           if (err) {
             return res.status(500).json({ error: err.message });
           }
@@ -196,7 +201,7 @@ app.post('/api/upload', (req, res) => {
             db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
           }
 
-          res.json({ success: true, id: this.lastID });
+          res.json({ success: true, id: this.lastID, width: displayWidth, height: displayHeight });
         });
     });
   });
