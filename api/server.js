@@ -10,9 +10,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
-const adminPassword = '公园221年秦时黄拉啥';
+const adminPassword = 'admin2026';
 
 const db = new sqlite3.Database(join(__dirname, 'canvas.db'), (err) => {
   if (err) {

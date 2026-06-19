@@ -1,0 +1,13 @@
+{
+  "name": "infinite-canvas",
+  "version": "1.0.0",
+  "description": "Infinite Canvas - Online collaborative drawing platform",
+  "type": "module",
+  "scripts": {
+    "start": "cd api && npm install && node server.js",
+    "install-deps": "cd api && npm install"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
