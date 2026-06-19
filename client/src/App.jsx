@@ -28,6 +28,8 @@ function App() {
   const [showDonation, setShowDonation] = useState(false);
   const [longPressImage, setLongPressImage] = useState(null);
   const [uploadMessage, setUploadMessage] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmData, setConfirmData] = useState(null);
 
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -100,27 +102,75 @@ function App() {
 
     e.target.value = '';
 
-    // 先检测图片像素尺寸
-    const { width, height } = await new Promise((resolve) => {
+    // 第一步：读取原图并检测像素尺寸
+    const { origWidth, origHeight, dataURL } = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
         const img = new Image();
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-        img.onerror = () => resolve({ width: 400, height: 400 });
+        img.onload = () => {
+          resolve({ origWidth: img.naturalWidth, origHeight: img.naturalHeight, dataURL: ev.target.result });
+        };
+        img.onerror = () => resolve({ origWidth: 400, origHeight: 400, dataURL: ev.target.result });
         img.src = ev.target.result;
       };
-      reader.onerror = () => resolve({ width: 400, height: 400 });
+      reader.onerror = () => resolve({ origWidth: 400, origHeight: 400, dataURL: '' });
       reader.readAsDataURL(file);
     });
 
+    // 第二步：自动缩小到不超过 50x50 像素（保持比例）
+    const maxPx = 50;
+    let targetW = origWidth;
+    let targetH = origHeight;
+    if (origWidth > maxPx || origHeight > maxPx) {
+      const scale = Math.min(maxPx / origWidth, maxPx / origHeight);
+      targetW = Math.max(1, Math.floor(origWidth * scale));
+      targetH = Math.max(1, Math.floor(origHeight * scale));
+    }
+
+    // 用 canvas 压缩图片
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const cctx = canvas.getContext('2d');
+    const img2 = new Image();
+    img2.src = dataURL;
+    await new Promise((res) => { img2.onload = res; });
+    cctx.drawImage(img2, 0, 0, targetW, targetH);
+
+    // 转成 jpg blob 进一步缩小体积
+    const smallDataURL = canvas.toDataURL('image/jpeg', 0.8);
+    const bytes = atob(smallDataURL.split(',')[1]);
+    const byteArray = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) {
+      byteArray[i] = bytes.charCodeAt(i);
+    }
+    const blob = new Blob([byteArray], { type: 'image/jpeg' });
+    const smallFile = new File([blob], 'image.jpg', { type: 'image/jpeg' });
+
+    // 保存信息，显示确认弹窗
+    setConfirmData({
+      file: smallFile,
+      preview: smallDataURL,
+      width: targetW,
+      height: targetH,
+      origSize: (file.size / 1024).toFixed(1),
+      newSize: (blob.size / 1024).toFixed(1)
+    });
+    setShowConfirm(true);
+  };
+
+  const confirmUpload = async () => {
+    if (!confirmData) return;
+
+    setShowConfirm(false);
     setIsUploading(true);
     setUploadProgress(0);
     setUploadMessage('');
 
     const formData = new FormData();
-    formData.append('image', file);
-    formData.append('width', String(width));
-    formData.append('height', String(height));
+    formData.append('image', confirmData.file);
+    formData.append('width', String(confirmData.width));
+    formData.append('height', String(confirmData.height));
 
     try {
       const xhr = new XMLHttpRequest();
@@ -128,7 +178,7 @@ function App() {
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100;
+          const percent = Math.round((event.loaded / event.total) * 100);
           setUploadProgress(percent);
         }
       };
@@ -145,7 +195,7 @@ function App() {
                 fetchUploadStatus();
                 setUploadMessage('上传成功！');
                 setTimeout(() => setUploadMessage(''), 2000);
-              }, 300);
+              }, 200);
             } else {
               setIsUploading(false);
               alert(data.error || '上传失败');
@@ -187,6 +237,12 @@ function App() {
       setIsUploading(false);
       alert('上传失败');
     }
+    setConfirmData(null);
+  };
+
+  const cancelUpload = () => {
+    setShowConfirm(false);
+    setConfirmData(null);
   };
 
 
@@ -886,6 +942,53 @@ function App() {
       {uploadMessage && (
         <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[95] bg-green-600 text-white px-6 py-3 rounded-xl font-semibold">
           {uploadMessage}
+        </div>
+      )}
+
+      {showConfirm && confirmData && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]"
+          onClick={cancelUpload}
+        >
+          <div
+            className="bg-tech-dark border border-tech-blue/30 rounded-xl p-6 text-center max-w-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-tech-blue font-semibold text-lg mb-3">确认上传</h3>
+            <div className="mb-3 flex items-center justify-center">
+              <img
+                src={confirmData.preview}
+                alt="预览"
+                style={{
+                  imageRendering: 'pixelated',
+                  width: Math.min(200, Math.max(80, confirmData.width * 4)),
+                  height: 'auto',
+                  maxHeight: 200,
+                  borderRadius: 8,
+                  border: '1px solid #555',
+                  background: '#fff'
+                }}
+              />
+            </div>
+            <div className="text-white/70 text-sm mb-2 space-y-1">
+              <div>缩小后尺寸：{confirmData.width} × {confirmData.height} 像素</div>
+              <div>原大小：{confirmData.origSize} KB → {confirmData.newSize} KB</div>
+              <div className="text-xs text-tech-blue">（已自动缩小到 ≤ 50×50 以内）</div>
+            </div>
+            <div className="flex gap-3 justify-center mt-4">
+              <button
+              className="tech-button"
+              onClick={confirmUpload}
+            >
+              ✓ 确认上传
+            </button>
+            <button
+              className="tech-button text-white/70"
+              onClick={cancelUpload}
+            >
+              取消
+            </button>
+          </div>
         </div>
       )}
 
