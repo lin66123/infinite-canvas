@@ -521,6 +521,28 @@ function App() {
     setDragImage(null);
   };
 
+  const copyDouyin = async () => {
+    const text = '70745340154';
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('抖音号已复制：' + text);
+    } catch (err) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        alert('抖音号已复制：' + text);
+      } catch (e) {
+        alert('复制失败，请手动复制：' + text);
+      }
+      document.body.removeChild(ta);
+    }
+  };
+
   const handleDeleteImage = async (imageId) => {
     if (!confirm('确定要删除这张图片吗？')) return;
     try {
@@ -869,27 +891,119 @@ function App() {
 
       {showDonation && (
         <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]"
+          className="fixed inset-0 bg-black/85 flex items-center justify-center z-[100] overflow-hidden"
           onClick={() => setShowDonation(false)}
         >
           <div
-            className="bg-tech-dark border border-tech-blue/30 rounded-xl p-6 text-center"
+            className="absolute inset-0"
+            style={{
+              background: 'radial-gradient(circle at 50% 50%, rgba(255,200,0,0.15) 0%, rgba(255,100,0,0.05) 40%, transparent 70%)',
+              animation: 'legendPulse 2s ease-in-out infinite'
+            }}
+          />
+          <div
+            className="relative"
             onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(180deg, #3a1c00 0%, #1a0800 100%)',
+              border: '4px solid #ffcc00',
+              borderRadius: '12px',
+              boxShadow: '0 0 40px rgba(255, 170, 0, 0.8), 0 0 80px rgba(255, 80, 0, 0.5), inset 0 0 30px rgba(255, 200, 0, 0.1)',
+              padding: '40px 50px',
+              textAlign: 'center',
+              animation: 'legendShake 0.15s ease-in-out infinite'
+            }}
           >
-            <h3 className="text-tech-blue font-semibold text-lg mb-3">💖 支持我们</h3>
-            <p className="text-white/70 text-sm mb-4">感谢您的支持！</p>
-            <img
-              src="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=QR%20code%20wechat%20pay%20donation%20tech%20style%20dark%20background&image_size=square"
-              alt="捐款二维码"
-              className="w-48 h-48 rounded-lg mx-auto mb-4"
-            />
-            <button
-              className="tech-button"
-              onClick={() => setShowDonation(false)}
+            <div
+              style={{
+                fontSize: '24px',
+                fontWeight: 900,
+                color: '#ffdd44',
+                textShadow: '0 0 10px #ff6600, 2px 2px 0 #660000, 4px 4px 0 #330000',
+                letterSpacing: '4px',
+                marginBottom: '20px'
+              }}
             >
-              关闭
+              ⚔️ 支持我们 ⚔️
+            </div>
+
+            <div
+              style={{
+                fontSize: '18px',
+                color: '#ffaa00',
+                textShadow: '1px 1px 0 #330000',
+                marginBottom: '15px',
+                fontWeight: 700
+              }}
+            >
+              抖音号
+            </div>
+
+            <div
+              style={{
+                fontSize: '64px',
+                fontWeight: 900,
+                color: '#fff',
+                textShadow: '0 0 20px #ffcc00, 0 0 40px #ff6600, 3px 3px 0 #660000, 6px 6px 0 #330000',
+                letterSpacing: '6px',
+                fontFamily: 'Impact, sans-serif',
+                padding: '15px 30px',
+                background: 'linear-gradient(180deg, rgba(255,200,0,0.2) 0%, rgba(255,100,0,0.1) 100%)',
+                border: '2px dashed #ffaa00',
+                borderRadius: '8px',
+                marginBottom: '25px',
+                animation: 'legendGlow 1.5s ease-in-out infinite alternate'
+              }}
+            >
+              70745340154
+            </div>
+
+            <button
+              onClick={copyDouyin}
+              style={{
+                background: 'linear-gradient(180deg, #ffaa00 0%, #cc5500 100%)',
+                color: '#fff',
+                fontSize: '20px',
+                fontWeight: 900,
+                padding: '12px 40px',
+                border: '3px solid #ffcc00',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                textShadow: '1px 1px 0 #660000',
+                boxShadow: '0 4px 0 #663300, 0 0 20px rgba(255, 170, 0, 0.6)',
+                letterSpacing: '2px'
+              }}
+            >
+              📋 一键复制
             </button>
+
+            <div
+              style={{
+                marginTop: '20px',
+                fontSize: '14px',
+                color: '#ffaa00',
+                opacity: 0.7
+              }}
+            >
+              点击空白处关闭
+            </div>
           </div>
+
+          <style>
+            @keyframes legendGlow {
+              0% { text-shadow: 0 0 20px #ffcc00, 0 0 40px #ff6600, 3px 3px 0 #660000, 6px 6px 0 #330000; }
+              100% { text-shadow: 0 0 30px #ffee66, 0 0 60px #ffaa00, 3px 3px 0 #660000, 6px 6px 0 #330000; }
+            }
+            @keyframes legendPulse {
+              0%, 100% { opacity: 0.8; transform: scale(1); }
+              50% { opacity: 1; transform: scale(1.05); }
+            }
+            @keyframes legendShake {
+              0%, 100% { transform: translate(0, 0); }
+              25% { transform: translate(0.5px, 0); }
+              75% { transform: translate(-0.5px, 0); }
+            }
+          </style>
         </div>
       )}
 
