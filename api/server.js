@@ -5,9 +5,18 @@ import multer from 'multer';
 import sqlite3 from 'sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { mkdirSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Ensure uploads directory exists (use /tmp for write access)
+const uploadsDir = '/tmp/uploads';
+try {
+  mkdirSync(uploadsDir, { recursive: true });
+} catch (e) {
+  console.error('Failed to create uploads directory:', e);
+}
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -59,7 +68,7 @@ const db = new sqlite3.Database(join(__dirname, 'canvas.db'), (err) => {
 });
 
 const storage = multer.diskStorage({
-  destination: join(__dirname, '../uploads'),
+  destination: uploadsDir,
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, `image-${uniqueSuffix}.${file.originalname.split('.').pop()}`);
@@ -82,7 +91,7 @@ const upload = multer({
 app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
 app.use(express.json());
-app.use('/uploads', express.static(join(__dirname, '../uploads')));
+app.use('/uploads', express.static(uploadsDir));
 
 app.get('/api/images', (req, res) => {
   db.all('SELECT * FROM images ORDER BY upload_date DESC', (err, rows) => {
