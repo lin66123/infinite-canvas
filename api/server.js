@@ -125,60 +125,66 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-app.post('/api/upload', upload.single('image'), (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress;
-  const today = new Date().toISOString().split('T')[0];
-  
-  db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], async (err, row) => {
+app.post('/api/upload', (req, res) => {
+  upload.single('image')(req, res, (err) => {
     if (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(400).json({ error: err.message || 'Upload failed' });
     }
-    
-    const dailyLimit = await new Promise((resolve) => {
-      db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, row) => {
-        resolve(parseInt(row?.value || '2'));
+
+    const ip = req.ip || req.connection.remoteAddress;
+    const today = new Date().toISOString().split('T')[0];
+
+    db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], async (err, row) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      const dailyLimit = await new Promise((resolve) => {
+        db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, row) => {
+          resolve(parseInt(row?.value || '2'));
+        });
       });
+
+      const currentCount = row?.count || 0;
+
+      if (currentCount >= dailyLimit) {
+        return res.status(403).json({ error: 'Daily upload limit reached' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const canvasWidth = await new Promise((resolve) => {
+        db.get('SELECT value FROM settings WHERE key = ?', ['canvas_width'], (err, row) => {
+          resolve(parseInt(row?.value || '20000'));
+        });
+      });
+
+      const canvasHeight = await new Promise((resolve) => {
+        db.get('SELECT value FROM settings WHERE key = ?', ['canvas_height'], (err, row) => {
+          resolve(parseInt(row?.value || '20000'));
+        });
+      });
+
+      const x = Math.floor(canvasWidth / 2);
+      const y = Math.floor(canvasHeight / 2);
+
+      db.run('INSERT INTO images (filename, x, y, width, height, uploader_ip) VALUES (?, ?, ?, ?, ?, ?)',
+        [req.file.filename, x, y, 200, 200, ip], (err) => {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+
+          if (row) {
+            db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
+          } else {
+            db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
+          }
+
+          res.json({ success: true, id: this.lastID });
+        });
     });
-    
-    const currentCount = row?.count || 0;
-    
-    if (currentCount >= dailyLimit) {
-      return res.status(403).json({ error: 'Daily upload limit reached' });
-    }
-    
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-    
-    const canvasWidth = await new Promise((resolve) => {
-      db.get('SELECT value FROM settings WHERE key = ?', ['canvas_width'], (err, row) => {
-        resolve(parseInt(row?.value || '20000'));
-      });
-    });
-    
-    const canvasHeight = await new Promise((resolve) => {
-      db.get('SELECT value FROM settings WHERE key = ?', ['canvas_height'], (err, row) => {
-        resolve(parseInt(row?.value || '20000'));
-      });
-    });
-    
-    const x = Math.floor(canvasWidth / 2);
-    const y = Math.floor(canvasHeight / 2);
-    
-    db.run('INSERT INTO images (filename, x, y, width, height, uploader_ip) VALUES (?, ?, ?, ?, ?, ?)',
-      [req.file.filename, x, y, 200, 200, ip], (err) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-        
-        if (row) {
-          db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
-        } else {
-          db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
-        }
-        
-        res.json({ success: true, id: this.lastID });
-      });
   });
 });
 
@@ -300,6 +306,15 @@ app.get('/api/upload/status', (req, res) => {
       });
     });
   });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
 });
 
 app.listen(port, '0.0.0.0', () => {
