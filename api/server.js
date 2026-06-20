@@ -60,6 +60,14 @@ const db = new sqlite3.Database(join(dataDir, 'canvas.db'), (err) => {
       date TEXT NOT NULL,
       count INTEGER DEFAULT 1
     )`);
+    db.run(`CREATE TABLE IF NOT EXISTS visitors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT NOT NULL,
+      user_agent TEXT,
+      first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+      last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(ip)
+    )`);
     db.run(`CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -99,7 +107,7 @@ const upload = multer({
 
 app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use('/uploads', express.static(uploadsDir));
 
 // 尝试多个候选路径找到前端构建产物
@@ -178,6 +186,42 @@ app.get('/api/settings', (req, res) => {
       rows.forEach(row => settings[row.key] = row.value);
       res.json(settings);
     }
+  });
+});
+
+// 访客记录 + 在线人数
+app.post('/api/visit', (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const ua = (req.headers['user-agent'] || '').substring(0, 500);
+  db.run(
+    'INSERT OR IGNORE INTO visitors (ip, user_agent, first_seen, last_seen) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+    [ip, ua],
+    () => {
+      db.run('UPDATE visitors SET last_seen = CURRENT_TIMESTAMP, user_agent = ? WHERE ip = ?', [ua, ip]);
+      res.json({ success: true });
+    }
+  );
+});
+
+// 在线人数：过去 3 分钟内活跃的访客
+app.get('/api/visitors/count', (req, res) => {
+  db.get(
+    "SELECT COUNT(*) AS cnt FROM visitors WHERE last_seen >= datetime('now', '-3 minutes')",
+    (err, row) => {
+      if (err) res.status(500).json({ error: err.message });
+      else res.json({ count: row?.cnt || 0 });
+    }
+  );
+});
+
+// 管理员：访客列表
+app.get('/api/admin/visitors', (req, res) => {
+  if (req.cookies.admin !== 'true') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  db.all('SELECT * FROM visitors ORDER BY last_seen DESC LIMIT 100', (err, rows) => {
+    if (err) res.status(500).json({ error: err.message });
+    else res.json(rows);
   });
 });
 

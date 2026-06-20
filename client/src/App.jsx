@@ -55,6 +55,8 @@ function App() {
   const [stampCursor, setStampCursor] = useState({ x: 1000, y: 1000 });
   const [isEraser, setIsEraser] = useState(false);
   const [eraserSize, setEraserSize] = useState(15);
+  const [onlineCount, setOnlineCount] = useState(0);
+  const [visitorList, setVisitorList] = useState([]);
 
   // refs
   const canvasRef = useRef(null);
@@ -72,6 +74,19 @@ function App() {
     fetchImages();
     fetchPixels();
     fetchUploadStatus();
+
+    // 报告访问 + 定期心跳
+    const visit = async () => {
+      try {
+        await fetch(API_URL + '/api/visit', { method: 'POST', credentials: 'include' });
+        const r = await fetch(API_URL + '/api/visitors/count');
+        const d = await r.json();
+        setOnlineCount(d.count || 0);
+      } catch (e) {}
+    };
+    visit();
+    const iv = setInterval(visit, 60000);
+    return () => clearInterval(iv);
   }, []);
 
   useEffect(() => {
@@ -137,8 +152,8 @@ function App() {
       reader.readAsDataURL(file);
     });
 
-    // 计算目标尺寸（保持比例，最大80像素）
-    const maxPx = 80;
+    // 计算目标尺寸（保持比例，最大50像素）
+    const maxPx = 50;
     let tw = imgInfo.width;
     let th = imgInfo.height;
     if (tw > maxPx || th > maxPx) {
@@ -658,6 +673,14 @@ function App() {
   };
 
   // 管理员功能
+  const fetchVisitors = async () => {
+    try {
+      const res = await fetch(API_URL + '/api/admin/visitors', { credentials: 'include' });
+      const data = await res.json();
+      if (Array.isArray(data)) setVisitorList(data);
+    } catch (err) {}
+  };
+
   const handleAdminLogin = async () => {
     try {
       const res = await fetch(API_URL + '/api/admin/login', {
@@ -670,6 +693,7 @@ function App() {
         setShowAdminLogin(false);
         setAdminPassword('');
         setAdminError('');
+        fetchVisitors();
       } else setAdminError(data.error || '密码错误');
     } catch (err) { setAdminError('登录失败'); }
   };
@@ -844,6 +868,18 @@ function App() {
         </div>
       </div>
 
+      {/* 顶部：在线人数 + 标题栏（居中） */}
+      <div style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 50, display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{
+          background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+          color: '#00d4ff', padding: '6px 16px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 8
+        }}>
+          <span style={{ width: 8, height: 8, background: '#22c55e', borderRadius: '50%', boxShadow: '0 0 8px #22c55e', display: 'inline-block' }} />
+          实时在线：{onlineCount} 人
+        </div>
+      </div>
+
       {/* 左上角：上传按钮 */}
       <div style={{ position: 'fixed', top: 16, left: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{
@@ -871,11 +907,37 @@ function App() {
       </div>
 
       {/* 右上角：画笔 + 管理 */}
-      <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 220 }}>
+      <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 240 }}>
+        {/* 调色板：色卡 + 大色块，直接显示 */}
         <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 12 }}>
-          <h3 style={{ color: '#00d4ff', fontSize: 13, marginBottom: 8 }}>画笔</h3>
-          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>颜色</div>
-          <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{ width: '100%', height: 30, borderRadius: 4, marginTop: 2, marginBottom: 8, cursor: 'pointer' }} />
+          <h3 style={{ color: '#00d4ff', fontSize: 13, marginBottom: 8 }}>🎨 颜色</h3>
+          {/* 大色块：直接显示当前颜色 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 10, background: brushColor,
+              border: '2px solid rgba(255,255,255,0.3)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+              flexShrink: 0
+            }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{ width: '100%', height: 28, borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', padding: 0 }} />
+              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 4, textAlign: 'center', letterSpacing: 1, textTransform: 'uppercase' }}>{brushColor}</div>
+            </div>
+          </div>
+          {/* 色卡快捷色 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {['#000000', '#ffffff', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#78716c', '#a16207', '#0ea5e9', '#10b981', '#f43f5e', '#6366f1'].map((c) => (
+              <button
+                key={c}
+                onClick={() => setBrushColor(c)}
+                title={c}
+                style={{
+                  width: 20, height: 20, borderRadius: 6, background: c,
+                  border: brushColor.toLowerCase() === c.toLowerCase() ? '2px solid #00d4ff' : '2px solid rgba(255,255,255,0.15)',
+                  cursor: 'pointer', padding: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                }}
+              />
+            ))}
+          </div>
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>粗细: {brushSize}px</div>
           <input type="range" min="1" max="50" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>硬度: {100 - brushSoftness}%</div>
@@ -892,30 +954,56 @@ function App() {
             🔑 管理后台
           </button>
         ) : (
-          <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: 12, padding: 12 }}>
-            <h3 style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>管理员</h3>
-            <button onClick={() => { setIsEraser(!isEraser); }} style={{ width: '100%', padding: '6px', background: isEraser ? 'rgba(239,68,68,0.35)' : 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
-              {isEraser ? '✖ 退出擦除' : '✂ 橡皮擦模式'}
-            </button>
-            {isEraser && (
-              <div style={{ marginBottom: 6, padding: 8, border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}>
-                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginBottom: 4 }}>擦除大小: {eraserSize}px</div>
-                <input type="range" min="3" max="100" value={eraserSize} onChange={(e) => setEraserSize(Number(e.target.value))} style={{ width: '100%' }} />
+          <>
+            <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: 12, padding: 12 }}>
+              <h3 style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>管理员</h3>
+              <button onClick={() => { setIsEraser(!isEraser); }} style={{ width: '100%', padding: '6px', background: isEraser ? 'rgba(239,68,68,0.35)' : 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+                {isEraser ? '✖ 退出擦除' : '✂ 橡皮擦模式'}
+              </button>
+              {isEraser && (
+                <div style={{ marginBottom: 6, padding: 8, border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginBottom: 4 }}>擦除大小: {eraserSize}px</div>
+                  <input type="range" min="3" max="100" value={eraserSize} onChange={(e) => setEraserSize(Number(e.target.value))} style={{ width: '100%' }} />
+                </div>
+              )}
+              <button onClick={handleDeleteSelected} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+                删除选中 ({selectedImages.length})
+              </button>
+              <button onClick={handleDeleteAllImages} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+                清空图片
+              </button>
+              <button onClick={handleClearCanvas} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+                清空涂鸦
+              </button>
+              <button onClick={handleAdminLogout} style={{ width: '100%', padding: '6px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
+                退出
+              </button>
+            </div>
+
+            {/* 访客列表（管理员可见） */}
+            <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 12, maxHeight: 320, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <h3 style={{ color: '#00d4ff', fontSize: 13, margin: 0 }}>👥 访客记录</h3>
+                <button onClick={fetchVisitors} style={{
+                  background: 'rgba(0,212,255,0.15)', border: '1px solid rgba(0,212,255,0.3)',
+                  color: '#00d4ff', padding: '3px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 11
+                }}>刷新</button>
               </div>
-            )}
-            <button onClick={handleDeleteSelected} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
-              删除选中 ({selectedImages.length})
-            </button>
-            <button onClick={handleDeleteAllImages} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
-              清空图片
-            </button>
-            <button onClick={handleClearCanvas} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
-              清空涂鸦
-            </button>
-            <button onClick={handleAdminLogout} style={{ width: '100%', padding: '6px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
-              退出
-            </button>
-          </div>
+              {visitorList.length === 0 ? (
+                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, textAlign: 'center', padding: '12px 0' }}>暂无访客数据</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {visitorList.map((v) => (
+                    <div key={v.id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '6px 8px', fontSize: 11 }}>
+                      <div style={{ color: '#00d4ff', fontWeight: 600, marginBottom: 2 }}>📍 {v.ip}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.6)', wordBreak: 'break-all', marginBottom: 2 }}>{v.user_agent || '(未知设备)'}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.45)' }}>首次: {v.first_seen} · 最后: {v.last_seen}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
 
