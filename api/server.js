@@ -10,12 +10,14 @@ import { mkdirSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Ensure uploads directory exists (use /tmp for write access)
-const uploadsDir = '/tmp/uploads';
+// Ensure uploads directory exists (use local path for personal server)
+const dataDir = join(__dirname, 'data');
+const uploadsDir = join(dataDir, 'uploads');
 try {
+  mkdirSync(dataDir, { recursive: true });
   mkdirSync(uploadsDir, { recursive: true });
 } catch (e) {
-  console.error('Failed to create uploads directory:', e);
+  console.error('Failed to create data directories:', e);
 }
 
 const app = express();
@@ -23,7 +25,14 @@ const port = process.env.PORT || 3001;
 
 const adminPassword = 'zhanxnk';
 
-const db = new sqlite3.Database(join(__dirname, 'canvas.db'), (err) => {
+console.log('\n========================================');
+console.log('  无限画布 - 本地服务器');
+console.log('  本地访问: http://localhost:' + port);
+console.log('  数据目录: ' + dataDir);
+console.log('  图片目录: ' + uploadsDir);
+console.log('========================================\n');
+
+const db = new sqlite3.Database(join(dataDir, 'canvas.db'), (err) => {
   if (err) {
     console.error('Database connection error:', err);
   } else {
