@@ -50,6 +50,8 @@ function App() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmData, setConfirmData] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [stampMode, setStampMode] = useState(null);
+  const [stampCursor, setStampCursor] = useState({ x: 1000, y: 1000 });
 
   // refs
   const canvasRef = useRef(null);
@@ -81,6 +83,16 @@ function App() {
     ctx.globalAlpha = 1;
   }, [pixels, canvasSize]);
 
+  // ESC 键退出盖章模式
+  useEffect(() => {
+    if (!stampMode) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setStampMode(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [stampMode]);
+
   // API
   const fetchImages = async () => {
     try {
@@ -104,15 +116,8 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
-  // 图片上传：检测尺寸 -> 压缩到 50x50 以内 -> 确认后上传
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { alert('图片大小不能超过10MB'); return; }
-    if (uploadRemaining <= 0) { alert('今日上传次数已用完'); return; }
-    e.target.value = '';
-
-    // 读取图片原始尺寸
+  // 通用：将图片文件处理成像素化数据
+  const processImageFile = async (file) => {
     const imgInfo = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -125,8 +130,8 @@ function App() {
       reader.readAsDataURL(file);
     });
 
-    // 计算目标尺寸（保持比例，最大50像素）
-    const maxPx = 50;
+    // 计算目标尺寸（保持比例，最大80像素）
+    const maxPx = 80;
     let tw = imgInfo.width;
     let th = imgInfo.height;
     if (tw > maxPx || th > maxPx) {
@@ -135,7 +140,7 @@ function App() {
       th = Math.max(1, Math.floor(th * s));
     }
 
-    // 绘制并压缩为 JPG blob
+    // 绘制到小 canvas
     const cv = document.createElement('canvas');
     cv.width = tw;
     cv.height = th;
@@ -146,79 +151,63 @@ function App() {
     cctx.drawImage(srcImg, 0, 0, tw, th);
     const smallDataURL = cv.toDataURL('image/jpeg', 0.8);
 
-    // 转 blob
-    const bytes = atob(smallDataURL.split(',')[1]);
-    const byteArray = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) byteArray[i] = bytes.charCodeAt(i);
-    const blob = new Blob([byteArray], { type: 'image/jpeg' });
-    const smallFile = new File([blob], 'image.jpg', { type: 'image/jpeg' });
+    // 从 canvas 提取每个像素的颜色（相对坐标）
+    const imgData = cctx.getImageData(0, 0, tw, th);
+    const pixels = [];
+    for (let y = 0; y < th; y++) {
+      for (let x = 0; x < tw; x++) {
+        const idx = (y * tw + x) * 4;
+        const r = imgData.data[idx];
+        const g = imgData.data[idx + 1];
+        const b = imgData.data[idx + 2];
+        const a = imgData.data[idx + 3];
+        // 跳过接近白色或完全透明的像素（减少数据量）
+        if (a < 50) continue;
+        if (r > 250 && g > 250 && b > 250) continue;
+        const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+        pixels.push({ x, y, color: hex });
+      }
+    }
 
-    setConfirmData({
-      file: smallFile,
-      preview: smallDataURL,
+    const bytes = atob(smallDataURL.split(',')[1]);
+    const blobSize = (bytes.length / 1024).toFixed(1);
+
+    return {
+      pixels,
       width: tw,
       height: th,
+      preview: smallDataURL,
       origSize: (file.size / 1024).toFixed(1),
-      newSize: (blob.size / 1024).toFixed(1)
-    });
+      newSize: blobSize,
+    };
+  };
+
+  // 图片上传：像素化 -> 确认预览 -> 盖章模式
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert('图片大小不能超过10MB'); return; }
+    if (uploadRemaining <= 0) { alert('今日上传次数已用完'); return; }
+    e.target.value = '';
+
+    const data = await processImageFile(file);
+    setConfirmData(data);
     setShowConfirm(true);
   };
 
-  // 确认上传
-  const confirmUpload = async () => {
+  // 确认上传 -> 进入盖章模式
+  const confirmUpload = () => {
     if (!confirmData) return;
     setShowConfirm(false);
-    setIsUploading(true);
-    setUploadProgress(0);
-
-    const formData = new FormData();
-    formData.append('image', confirmData.file);
-    formData.append('width', String(confirmData.width));
-    formData.append('height', String(confirmData.height));
-
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.timeout = 60000;
-      xhr.upload.onprogress = (ev) => {
-        if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (data.success) {
-              setUploadProgress(100);
-              setTimeout(() => {
-                setIsUploading(false);
-                fetchImages();
-                fetchUploadStatus();
-                setUploadMessage('上传成功！');
-                setTimeout(() => setUploadMessage(''), 2000);
-              }, 200);
-            } else {
-              setIsUploading(false);
-              alert(data.error || '上传失败');
-            }
-          } catch (err) {
-            setIsUploading(false);
-            alert('上传失败');
-          }
-        } else {
-          setIsUploading(false);
-          alert('上传失败（错误 ' + xhr.status + '）');
-        }
-      };
-      xhr.onerror = () => { setIsUploading(false); alert('上传失败，请检查网络'); };
-      xhr.ontimeout = () => { setIsUploading(false); alert('上传超时，请重试'); };
-      xhr.onabort = () => { setIsUploading(false); };
-      xhr.open('POST', API_URL + '/api/upload');
-      xhr.withCredentials = true;
-      xhr.send(formData);
-    } catch (err) {
-      setIsUploading(false);
-      alert('上传失败');
-    }
+    setStampMode({
+      pixels: confirmData.pixels,
+      width: confirmData.width,
+      height: confirmData.height,
+    });
     setConfirmData(null);
+    if (uploadRemaining > 0) {
+      setUploadRemaining(uploadRemaining - 1);
+    }
   };
 
   const cancelUpload = () => {
@@ -254,55 +243,8 @@ function App() {
     if (!file.type.startsWith('image/')) { alert('请拖入图片文件'); return; }
     if (file.size > 10 * 1024 * 1024) { alert('图片大小不能超过10MB'); return; }
 
-    // 读取图片原始尺寸
-    const imgInfo = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight, dataURL: ev.target.result });
-        img.onerror = () => resolve({ width: 400, height: 400, dataURL: '' });
-        img.src = ev.target.result;
-      };
-      reader.onerror = () => resolve({ width: 400, height: 400, dataURL: '' });
-      reader.readAsDataURL(file);
-    });
-
-    // 计算目标尺寸（保持比例，最大50像素）
-    const maxPx = 50;
-    let tw = imgInfo.width;
-    let th = imgInfo.height;
-    if (tw > maxPx || th > maxPx) {
-      const s = Math.min(maxPx / tw, maxPx / th);
-      tw = Math.max(1, Math.floor(tw * s));
-      th = Math.max(1, Math.floor(th * s));
-    }
-
-    // 绘制并压缩为 JPG blob
-    const cv = document.createElement('canvas');
-    cv.width = tw;
-    cv.height = th;
-    const cctx = cv.getContext('2d');
-    const srcImg = new Image();
-    srcImg.src = imgInfo.dataURL;
-    await new Promise((res) => { srcImg.onload = res; srcImg.onerror = res; });
-    cctx.drawImage(srcImg, 0, 0, tw, th);
-    const smallDataURL = cv.toDataURL('image/jpeg', 0.8);
-
-    // 转 blob
-    const bytes = atob(smallDataURL.split(',')[1]);
-    const byteArray = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) byteArray[i] = bytes.charCodeAt(i);
-    const blob = new Blob([byteArray], { type: 'image/jpeg' });
-    const smallFile = new File([blob], 'image.jpg', { type: 'image/jpeg' });
-
-    setConfirmData({
-      file: smallFile,
-      preview: smallDataURL,
-      width: tw,
-      height: th,
-      origSize: (file.size / 1024).toFixed(1),
-      newSize: (blob.size / 1024).toFixed(1)
-    });
+    const data = await processImageFile(file);
+    setConfirmData(data);
     setShowConfirm(true);
   };
 
@@ -367,13 +309,18 @@ function App() {
 
   // 鼠标事件
   const handleMouseDown = (e) => {
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    if (stampMode) {
+      // 盖章模式：点击落下像素
+      stampAt(coords.x, coords.y);
+      return;
+    }
     if (e.button === 1 || e.button === 2) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y };
       return;
     }
     if (e.button !== 0) return;
-    const coords = getCanvasCoords(e.clientX, e.clientY);
     if (dragImage) {
       const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
       const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
@@ -385,6 +332,11 @@ function App() {
   };
 
   const handleMouseMove = (e) => {
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    if (stampMode) {
+      setStampCursor({ x: coords.x, y: coords.y });
+      return;
+    }
     if (isPanning) {
       setOffset({
         x: panStartRef.current.offsetX + e.clientX - panStartRef.current.x,
@@ -393,7 +345,6 @@ function App() {
       return;
     }
     if (!isDrawing && !dragImage) return;
-    const coords = getCanvasCoords(e.clientX, e.clientY);
     if (isDrawing) drawPixel(coords.x, coords.y);
     else if (dragImage) {
       const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
@@ -408,6 +359,49 @@ function App() {
     setIsPanning(false);
     setDragImage(null);
   };
+
+  // 在画布上盖章 -> 画像素 + 上传服务器
+  const stampAt = useCallback(async (cx, cy) => {
+    if (!stampMode) return;
+    const { pixels, width, height } = stampMode;
+    const ctx = canvasRef.current?.getContext('2d');
+    if (!ctx) return;
+
+    const startX = cx - Math.floor(width / 2);
+    const startY = cy - Math.floor(height / 2);
+    const toSend = [];
+
+    for (const p of pixels) {
+      const px = startX + p.x;
+      const py = startY + p.y;
+      if (px >= 0 && px < canvasSize && py >= 0 && py < canvasSize) {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(px, py, 1, 1);
+        toSend.push({ x: px, y: py, color: p.color });
+      }
+    }
+
+    // 发送到服务器（带每日上传限额检查）
+    if (toSend.length > 0) {
+      try {
+        const resp = await fetch(API_URL + '/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pixels: toSend }),
+        });
+        const data = await resp.json();
+        if (!data.success) {
+          alert('上传失败: ' + (data.error || '未知错误'));
+        }
+      } catch (err) { console.error(err); }
+    }
+
+    setStampMode(null);
+    fetchUploadStatus();
+    setUploadMessage('盖章成功！');
+    setTimeout(() => setUploadMessage(''), 2000);
+  }, [stampMode, canvasSize]);
 
   // 滚轮缩放
   const handleWheel = (e) => {
@@ -427,6 +421,11 @@ function App() {
   const getTouchCenter = (t1, t2) => ({ x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 });
 
   const handleTouchStart = (e) => {
+    const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+    if (stampMode) {
+      stampAt(coords.x, coords.y);
+      return;
+    }
     if (e.touches.length === 2) {
       e.preventDefault();
       const t1 = e.touches[0];
@@ -444,7 +443,6 @@ function App() {
       setIsDrawing(false);
       setDragImage(null);
     } else if (e.touches.length === 1 && !touchStartRef.current.twoFinger) {
-      const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
       if (dragImage) {
         const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
         const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
@@ -479,8 +477,12 @@ function App() {
       }
       return;
     }
-    if (!isDrawing && !dragImage) return;
     const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+    if (stampMode) {
+      setStampCursor({ x: coords.x, y: coords.y });
+      return;
+    }
+    if (!isDrawing && !dragImage) return;
     if (isDrawing) drawPixel(coords.x, coords.y);
     else if (dragImage) {
       const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
@@ -680,7 +682,7 @@ function App() {
               ref={canvasRef}
               width={canvasSize}
               height={canvasSize}
-              style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: isPanning ? 'grabbing' : 'crosshair' }}
+              style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: stampMode ? 'copy' : (isPanning ? 'grabbing' : 'crosshair') }}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -691,6 +693,28 @@ function App() {
               onWheel={handleWheel}
               onContextMenu={(e) => e.preventDefault()}
             />
+
+            {stampMode && (
+              <div style={{
+                position: 'absolute',
+                left: stampCursor.x - Math.floor(stampMode.width / 2),
+                top: stampCursor.y - Math.floor(stampMode.height / 2),
+                width: stampMode.width,
+                height: stampMode.height,
+                pointerEvents: 'none',
+                opacity: 0.75,
+                imageRendering: 'pixelated',
+              }}>
+                {stampMode.pixels.map((p, i) => (
+                  <div key={i} style={{
+                    position: 'absolute',
+                    left: p.x, top: p.y,
+                    width: 1, height: 1,
+                    background: p.color,
+                  }} />
+                ))}
+              </div>
+            )}
 
             {images.map(img => (
               <div
@@ -817,7 +841,7 @@ function App() {
 
       {/* 右下角：操作提示 */}
       <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 50, fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: 6, maxWidth: 320, textAlign: 'right' }}>
-        左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放
+        {stampMode ? '🖱 点击画布任意位置盖章 | ESC 取消' : '左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放'}
       </div>
 
       {/* 上传进度 */}
@@ -844,7 +868,7 @@ function App() {
       {showConfirm && confirmData && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }} onClick={cancelUpload}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: '#1a1a2e', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 24, textAlign: 'center', maxWidth: 400 }}>
-            <h3 style={{ color: '#00d4ff', fontSize: 18, marginBottom: 16 }}>确认上传</h3>
+            <h3 style={{ color: '#00d4ff', fontSize: 18, marginBottom: 16 }}>将图片变为像素印章</h3>
             <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
               <img src={confirmData.preview} alt="预览" style={{
                 imageRendering: 'pixelated',
@@ -856,16 +880,13 @@ function App() {
             <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 4 }}>
               尺寸: {confirmData.width} × {confirmData.height} 像素
             </div>
-            <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 4 }}>
-              原大小: {confirmData.origSize} KB → {confirmData.newSize} KB
-            </div>
-            <div style={{ color: '#00d4ff', fontSize: 12, marginBottom: 20 }}>（已自动缩小到 ≤ 50 × 50 像素以内）</div>
+            <div style={{ color: '#00d4ff', fontSize: 12, marginBottom: 20 }}>点击画布上的任意位置盖章</div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
               <button onClick={confirmUpload} style={{
-                background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+                background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0,212,255,0.4)',
                 color: '#00d4ff', padding: '8px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 14
               }}>
-                ✓ 确认上传
+                ✓ 进入盖章模式
               </button>
               <button onClick={cancelUpload} style={{
                 background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',

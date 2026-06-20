@@ -182,6 +182,60 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.post('/api/upload', (req, res) => {
+  // 像素盖章模式（JSON 数据）
+  if (req.headers['content-type'] && req.headers['content-type'].indexOf('application/json') !== -1) {
+    const { pixels } = req.body;
+    if (!pixels || !Array.isArray(pixels) || pixels.length === 0) {
+      return res.status(400).json({ error: 'No pixel data' });
+    }
+
+    const ip = req.ip || req.connection.remoteAddress;
+    const today = new Date().toISOString().split('T')[0];
+
+    db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], (err, row) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, limitRow) => {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+
+        const dailyLimit = parseInt(limitRow?.value || '2');
+        const currentCount = row?.count || 0;
+
+        if (currentCount >= dailyLimit) {
+          return res.status(403).json({ error: 'Daily upload limit reached' });
+        }
+
+        // 将像素存入画布
+        const stmt = db.prepare('INSERT INTO canvas_pixels (x, y, color) VALUES (?, ?, ?)');
+        pixels.forEach(p => {
+          if (p.x != null && p.y != null && p.color) {
+            stmt.run(Math.round(p.x), Math.round(p.y), p.color);
+          }
+        });
+        stmt.finalize((err) => {
+          if (err) {
+            return res.status(500).json({ error: err.message });
+          }
+
+          // 更新上传计数
+          if (row) {
+            db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
+          } else {
+            db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
+          }
+
+          res.json({ success: true, count: pixels.length });
+        });
+      });
+    });
+    return;
+  }
+
+  // 文件上传（旧流程）
   upload.single('image')(req, res, (err) => {
     if (err) {
       return res.status(400).json({ error: err.message || 'Upload failed' });
