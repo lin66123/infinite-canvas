@@ -4,6 +4,10 @@ import './App.css';
 const API_URL = 'https://infinite-canvas-production-b078.up.railway.app';
 
 function App() {
+  // 画布尺寸 - 改小以提升性能
+  const canvasSize = 2000;
+
+  // 状态
   const [images, setImages] = useState([]);
   const [pixels, setPixels] = useState([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -26,19 +30,21 @@ function App() {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
-  const [longPressImage, setLongPressImage] = useState(null);
   const [uploadMessage, setUploadMessage] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmData, setConfirmData] = useState(null);
 
+  // refs
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const pendingPixels = useRef([]);
-  const canvasSize = 5000;
   const panStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
-  const touchStartRef = useRef({ distance: 0, scale: 1, centerX: 0, centerY: 0, offsetX: 0, offsetY: 0, twoFinger: false });
-  const longPressTimerRef = useRef(null);
+  const touchStartRef = useRef({
+    distance: 0, scale: 1, centerX: 0, centerY: 0,
+    offsetX: 0, offsetY: 0, twoFinger: false
+  });
 
+  // 初始化
   useEffect(() => {
     fetchImages();
     fetchPixels();
@@ -58,114 +64,95 @@ function App() {
     ctx.globalAlpha = 1;
   }, [pixels, canvasSize]);
 
+  // API
   const fetchImages = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/images`);
-      const data = await res.json();
-      setImages(data);
-    } catch (err) {
-      console.error('Failed to fetch images:', err);
-    }
+      const res = await fetch(API_URL + '/api/images');
+      setImages(await res.json());
+    } catch (err) { console.error(err); }
   };
 
   const fetchPixels = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/pixels`);
-      const data = await res.json();
-      setPixels(data);
-    } catch (err) {
-      console.error('Failed to fetch pixels:', err);
-    }
+      const res = await fetch(API_URL + '/api/pixels');
+      setPixels(await res.json());
+    } catch (err) { console.error(err); }
   };
 
   const fetchUploadStatus = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/upload/status`, { credentials: 'include' });
+      const res = await fetch(API_URL + '/api/upload/status', { credentials: 'include' });
       const data = await res.json();
       setUploadRemaining(data.remaining);
-    } catch (err) {
-      console.error('Failed to fetch upload status:', err);
-    }
+    } catch (err) { console.error(err); }
   };
 
+  // 图片上传：检测尺寸 -> 压缩到 50x50 以内 -> 确认后上传
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      alert('图片大小不能超过10MB');
-      return;
-    }
-    if (uploadRemaining <= 0) {
-      alert('今日上传次数已用完');
-      return;
-    }
-
+    if (file.size > 10 * 1024 * 1024) { alert('图片大小不能超过10MB'); return; }
+    if (uploadRemaining <= 0) { alert('今日上传次数已用完'); return; }
     e.target.value = '';
 
-    // 第一步：读取原图并检测像素尺寸
-    const { origWidth, origHeight, dataURL } = await new Promise((resolve) => {
+    // 读取图片原始尺寸
+    const imgInfo = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
         const img = new Image();
-        img.onload = () => {
-          resolve({ origWidth: img.naturalWidth, origHeight: img.naturalHeight, dataURL: ev.target.result });
-        };
-        img.onerror = () => resolve({ origWidth: 400, origHeight: 400, dataURL: ev.target.result });
+        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight, dataURL: ev.target.result });
+        img.onerror = () => resolve({ width: 400, height: 400, dataURL: '' });
         img.src = ev.target.result;
       };
-      reader.onerror = () => resolve({ origWidth: 400, origHeight: 400, dataURL: '' });
+      reader.onerror = () => resolve({ width: 400, height: 400, dataURL: '' });
       reader.readAsDataURL(file);
     });
 
-    // 第二步：自动缩小到不超过 50x50 像素（保持比例）
+    // 计算目标尺寸（保持比例，最大50像素）
     const maxPx = 50;
-    let targetW = origWidth;
-    let targetH = origHeight;
-    if (origWidth > maxPx || origHeight > maxPx) {
-      const scale = Math.min(maxPx / origWidth, maxPx / origHeight);
-      targetW = Math.max(1, Math.floor(origWidth * scale));
-      targetH = Math.max(1, Math.floor(origHeight * scale));
+    let tw = imgInfo.width;
+    let th = imgInfo.height;
+    if (tw > maxPx || th > maxPx) {
+      const s = Math.min(maxPx / tw, maxPx / th);
+      tw = Math.max(1, Math.floor(tw * s));
+      th = Math.max(1, Math.floor(th * s));
     }
 
-    // 用 canvas 压缩图片
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const cctx = canvas.getContext('2d');
-    const img2 = new Image();
-    img2.src = dataURL;
-    await new Promise((res) => { img2.onload = res; });
-    cctx.drawImage(img2, 0, 0, targetW, targetH);
+    // 绘制并压缩为 JPG blob
+    const cv = document.createElement('canvas');
+    cv.width = tw;
+    cv.height = th;
+    const cctx = cv.getContext('2d');
+    const srcImg = new Image();
+    srcImg.src = imgInfo.dataURL;
+    await new Promise((res) => { srcImg.onload = res; srcImg.onerror = res; });
+    cctx.drawImage(srcImg, 0, 0, tw, th);
+    const smallDataURL = cv.toDataURL('image/jpeg', 0.8);
 
-    // 转成 jpg blob 进一步缩小体积
-    const smallDataURL = canvas.toDataURL('image/jpeg', 0.8);
+    // 转 blob
     const bytes = atob(smallDataURL.split(',')[1]);
     const byteArray = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i++) {
-      byteArray[i] = bytes.charCodeAt(i);
-    }
+    for (let i = 0; i < bytes.length; i++) byteArray[i] = bytes.charCodeAt(i);
     const blob = new Blob([byteArray], { type: 'image/jpeg' });
     const smallFile = new File([blob], 'image.jpg', { type: 'image/jpeg' });
 
-    // 保存信息，显示确认弹窗
     setConfirmData({
       file: smallFile,
       preview: smallDataURL,
-      width: targetW,
-      height: targetH,
+      width: tw,
+      height: th,
       origSize: (file.size / 1024).toFixed(1),
       newSize: (blob.size / 1024).toFixed(1)
     });
     setShowConfirm(true);
   };
 
+  // 确认上传
   const confirmUpload = async () => {
     if (!confirmData) return;
-
     setShowConfirm(false);
     setIsUploading(true);
     setUploadProgress(0);
-    setUploadMessage('');
 
     const formData = new FormData();
     formData.append('image', confirmData.file);
@@ -175,14 +162,9 @@ function App() {
     try {
       const xhr = new XMLHttpRequest();
       xhr.timeout = 60000;
-
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(percent);
-        }
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) setUploadProgress(Math.round((ev.loaded / ev.total) * 100));
       };
-
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
@@ -206,34 +188,16 @@ function App() {
           }
         } else {
           setIsUploading(false);
-          try {
-            const data = JSON.parse(xhr.responseText);
-            alert(data.error || '上传失败 (错误 ' + xhr.status + ')');
-          } catch (err) {
-            alert('上传失败 (错误 ' + xhr.status + ')');
-          }
+          alert('上传失败（错误 ' + xhr.status + '）');
         }
       };
-
-      xhr.onerror = () => {
-        setIsUploading(false);
-        alert('上传失败，请检查网络连接');
-      };
-
-      xhr.ontimeout = () => {
-        setIsUploading(false);
-        alert('上传超时，请重试');
-      };
-
-      xhr.onabort = () => {
-        setIsUploading(false);
-      };
-
+      xhr.onerror = () => { setIsUploading(false); alert('上传失败，请检查网络'); };
+      xhr.ontimeout = () => { setIsUploading(false); alert('上传超时，请重试'); };
+      xhr.onabort = () => { setIsUploading(false); };
       xhr.open('POST', API_URL + '/api/upload');
       xhr.withCredentials = true;
       xhr.send(formData);
     } catch (err) {
-      console.error('Upload failed:', err);
       setIsUploading(false);
       alert('上传失败');
     }
@@ -245,24 +209,24 @@ function App() {
     setConfirmData(null);
   };
 
-
+  // 坐标转换
   const getCanvasCoords = useCallback((clientX, clientY) => {
     if (!canvasRef.current) return { x: 0, y: 0 };
-    const canvasRect = canvasRef.current.getBoundingClientRect();
-    const relX = (clientX - canvasRect.left) / scale;
-    const relY = (clientY - canvasRect.top) / scale;
-    return { x: Math.floor(relX), y: Math.floor(relY) };
+    const rect = canvasRef.current.getBoundingClientRect();
+    return {
+      x: Math.floor((clientX - rect.left) / scale),
+      y: Math.floor((clientY - rect.top) / scale)
+    };
   }, [scale]);
 
+  // 画画
   const drawPixel = useCallback((x, y) => {
     if (x < 0 || x >= canvasSize || y < 0 || y >= canvasSize) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-
     const halfSize = Math.floor(brushSize / 2);
     const softHalf = Math.floor((brushSize * brushSoftness) / 200);
-
     for (let i = -halfSize; i <= halfSize; i++) {
       for (let j = -halfSize; j <= halfSize; j++) {
         const px = x + i;
@@ -270,12 +234,9 @@ function App() {
         if (px >= 0 && px < canvasSize && py >= 0 && py < canvasSize) {
           let alpha = brushOpacity / 100;
           if (softHalf > 0) {
-            const distFromCenter = Math.sqrt(i * i + j * j);
+            const dist = Math.sqrt(i * i + j * j);
             const coreDist = halfSize - softHalf;
-            if (distFromCenter > coreDist) {
-              const softness = 1 - (distFromCenter - coreDist) / softHalf;
-              alpha *= Math.max(0, softness);
-            }
+            if (dist > coreDist) alpha *= Math.max(0, 1 - (dist - coreDist) / softHalf);
           }
           if (alpha > 0) {
             ctx.globalAlpha = alpha;
@@ -287,7 +248,6 @@ function App() {
       }
     }
     ctx.globalAlpha = 1;
-
     const now = Date.now();
     if (now - lastSaveTime > 500) {
       setLastSaveTime(now);
@@ -295,135 +255,106 @@ function App() {
     }
   }, [brushColor, brushSize, brushSoftness, brushOpacity, canvasSize, lastSaveTime]);
 
+  const flushPixels = async () => {
+    if (pendingPixels.current.length === 0) return;
+    const toSend = [...pendingPixels.current];
+    pendingPixels.current = [];
+    try {
+      await fetch(API_URL + '/api/draw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pixels: toSend })
+      });
+    } catch (err) { console.error(err); }
+  };
+
+  // 鼠标事件
   const handleMouseDown = (e) => {
     if (e.button === 1 || e.button === 2) {
       setIsPanning(true);
       panStartRef.current = { x: e.clientX, y: e.clientY, offsetX: offset.x, offsetY: offset.y };
       return;
     }
-
     if (e.button !== 0) return;
-
     const coords = getCanvasCoords(e.clientX, e.clientY);
-    const x = coords.x;
-    const y = coords.y;
-
     if (dragImage) {
-      const newX = Math.max(0, Math.min(canvasSize - dragImage.width, x - dragOffset.x));
-      const newY = Math.max(0, Math.min(canvasSize - dragImage.height, y - dragOffset.y));
-      setImages(prev => prev.map(img =>
-        img.id === dragImage.id ? { ...img, x: newX, y: newY } : img
-      ));
+      const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
+      const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
+      setImages(prev => prev.map(img => img.id === dragImage.id ? { ...img, x: nx, y: ny } : img));
     } else {
       setIsDrawing(true);
-      drawPixel(x, y);
+      drawPixel(coords.x, coords.y);
     }
   };
 
   const handleMouseMove = (e) => {
     if (isPanning) {
-      const dx = e.clientX - panStartRef.current.x;
-      const dy = e.clientY - panStartRef.current.y;
-      setOffset({ x: panStartRef.current.offsetX + dx, y: panStartRef.current.offsetY + dy });
+      setOffset({
+        x: panStartRef.current.offsetX + e.clientX - panStartRef.current.x,
+        y: panStartRef.current.offsetY + e.clientY - panStartRef.current.y
+      });
       return;
     }
-
     if (!isDrawing && !dragImage) return;
-
     const coords = getCanvasCoords(e.clientX, e.clientY);
-    const x = coords.x;
-    const y = coords.y;
-
-    if (isDrawing) {
-      drawPixel(x, y);
-    } else if (dragImage) {
-      const newX = Math.max(0, Math.min(canvasSize - dragImage.width, x - dragOffset.x));
-      const newY = Math.max(0, Math.min(canvasSize - dragImage.height, y - dragOffset.y));
-      setImages(prev => prev.map(img =>
-        img.id === dragImage.id ? { ...img, x: newX, y: newY } : img
-      ));
+    if (isDrawing) drawPixel(coords.x, coords.y);
+    else if (dragImage) {
+      const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
+      const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
+      setImages(prev => prev.map(img => img.id === dragImage.id ? { ...img, x: nx, y: ny } : img));
     }
   };
 
   const handleMouseUp = () => {
-    if (isDrawing) {
-      flushPixels();
-    }
+    if (isDrawing) flushPixels();
     setIsDrawing(false);
     setIsPanning(false);
     setDragImage(null);
   };
 
+  // 滚轮缩放
   const handleWheel = (e) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(5, scale * delta));
-
-    const canvasRect = canvasRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - canvasRect.left;
-    const mouseY = e.clientY - canvasRect.top;
-
-    const scaleRatio = newScale / scale;
-    const newOffsetX = offset.x - mouseX * (scaleRatio - 1);
-    const newOffsetY = offset.y - mouseY * (scaleRatio - 1);
-
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const ratio = newScale / scale;
+    setOffset({ x: offset.x - mx * (ratio - 1), y: offset.y - my * (ratio - 1) });
     setScale(newScale);
-    setOffset({ x: newOffsetX, y: newOffsetY });
   };
 
-  const getTouchDistance = (t1, t2) => {
-    const dx = t1.clientX - t2.clientX;
-    const dy = t1.clientY - t2.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
-
-  const getTouchCenter = (t1, t2) => {
-    return {
-      x: (t1.clientX + t2.clientX) / 2,
-      y: (t1.clientY + t2.clientY) / 2
-    };
-  };
+  // 触屏
+  const getTouchDistance = (t1, t2) => Math.sqrt((t1.clientX - t2.clientX) ** 2 + (t1.clientY - t2.clientY) ** 2);
+  const getTouchCenter = (t1, t2) => ({ x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 });
 
   const handleTouchStart = (e) => {
     if (e.touches.length === 2) {
       e.preventDefault();
-      if (longPressTimerRef.current) {
-        clearTimeout(longPressTimerRef.current);
-        longPressTimerRef.current = null;
-      }
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const center = getTouchCenter(t1, t2);
-      const canvasRect = canvasRef.current.getBoundingClientRect();
-      const centerX = center.x - canvasRect.left;
-      const centerY = center.y - canvasRect.top;
+      const rect = canvasRef.current.getBoundingClientRect();
       touchStartRef.current = {
         distance: getTouchDistance(t1, t2),
         scale: scale,
-        centerX,
-        centerY,
-        offsetX: offset.x,
-        offsetY: offset.y,
-        twoFinger: true
+        centerX: center.x - rect.left,
+        centerY: center.y - rect.top,
+        offsetX: offset.x, offsetY: offset.y, twoFinger: true
       };
       setIsPanning(true);
       setIsDrawing(false);
       setDragImage(null);
     } else if (e.touches.length === 1 && !touchStartRef.current.twoFinger) {
-      const touch = e.touches[0];
-      const coords = getCanvasCoords(touch.clientX, touch.clientY);
-      const x = coords.x;
-      const y = coords.y;
-
+      const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
       if (dragImage) {
-        const newX = Math.max(0, Math.min(canvasSize - dragImage.width, x - dragOffset.x));
-        const newY = Math.max(0, Math.min(canvasSize - dragImage.height, y - dragOffset.y));
-        setImages(prev => prev.map(img =>
-          img.id === dragImage.id ? { ...img, x: newX, y: newY } : img
-        ));
+        const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
+        const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
+        setImages(prev => prev.map(img => img.id === dragImage.id ? { ...img, x: nx, y: ny } : img));
       } else {
         setIsDrawing(true);
-        drawPixel(x, y);
+        drawPixel(coords.x, coords.y);
       }
     }
   };
@@ -434,54 +365,36 @@ function App() {
         e.preventDefault();
         const t1 = e.touches[0];
         const t2 = e.touches[1];
-        const newDistance = getTouchDistance(t1, t2);
-        const scaleRatio = newDistance / touchStartRef.current.distance;
-        const newScale = Math.max(0.1, Math.min(5, touchStartRef.current.scale * scaleRatio));
-
-        const newCenter = getTouchCenter(t1, t2);
-        const canvasRect = canvasRef.current.getBoundingClientRect();
-        const curCenterX = newCenter.x - canvasRect.left;
-        const curCenterY = newCenter.y - canvasRect.top;
-
-        const realScaleRatio = newScale / touchStartRef.current.scale;
-        const scaleOffsetX = touchStartRef.current.centerX * (1 - realScaleRatio);
-        const scaleOffsetY = touchStartRef.current.centerY * (1 - realScaleRatio);
-
-        const dx = curCenterX - touchStartRef.current.centerX;
-        const dy = curCenterY - touchStartRef.current.centerY;
-
+        const newDist = getTouchDistance(t1, t2);
+        const ratio = newDist / touchStartRef.current.distance;
+        const newScale = Math.max(0.1, Math.min(5, touchStartRef.current.scale * ratio));
+        const center = getTouchCenter(t1, t2);
+        const rect = canvasRef.current.getBoundingClientRect();
+        const cx = center.x - rect.left;
+        const cy = center.y - rect.top;
+        const realRatio = newScale / touchStartRef.current.scale;
+        const sx = touchStartRef.current.centerX * (1 - realRatio);
+        const sy = touchStartRef.current.centerY * (1 - realRatio);
+        const dx = cx - touchStartRef.current.centerX;
+        const dy = cy - touchStartRef.current.centerY;
         setScale(newScale);
-        setOffset({
-          x: touchStartRef.current.offsetX + scaleOffsetX + dx,
-          y: touchStartRef.current.offsetY + scaleOffsetY + dy
-        });
+        setOffset({ x: touchStartRef.current.offsetX + sx + dx, y: touchStartRef.current.offsetY + sy + dy });
       }
       return;
     }
-
     if (!isDrawing && !dragImage) return;
-
-    const touch = e.touches[0];
-    const coords = getCanvasCoords(touch.clientX, touch.clientY);
-    const x = coords.x;
-    const y = coords.y;
-
-    if (isDrawing) {
-      drawPixel(x, y);
-    } else if (dragImage) {
-      const newX = Math.max(0, Math.min(canvasSize - dragImage.width, x - dragOffset.x));
-      const newY = Math.max(0, Math.min(canvasSize - dragImage.height, y - dragOffset.y));
-      setImages(prev => prev.map(img =>
-        img.id === dragImage.id ? { ...img, x: newX, y: newY } : img
-      ));
+    const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+    if (isDrawing) drawPixel(coords.x, coords.y);
+    else if (dragImage) {
+      const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
+      const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
+      setImages(prev => prev.map(img => img.id === dragImage.id ? { ...img, x: nx, y: ny } : img));
     }
   };
 
   const handleTouchEnd = (e) => {
     if (e.touches.length === 0) {
-      if (isDrawing) {
-        flushPixels();
-      }
+      if (isDrawing) flushPixels();
       setIsDrawing(false);
       setIsPanning(false);
       setDragImage(null);
@@ -492,109 +405,65 @@ function App() {
     }
   };
 
-  const flushPixels = async () => {
-    if (pendingPixels.current.length === 0) return;
-    const pixelsToSend = [...pendingPixels.current];
-    pendingPixels.current = [];
-    try {
-      await fetch(`${API_URL}/api/draw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pixels: pixelsToSend })
-      });
-    } catch (err) {
-      console.error('Failed to save pixels:', err);
-    }
-  };
-
+  // 图片交互
   const handleImageMouseDown = (e, image) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     if (isAdmin) {
-      if (selectedImages.includes(image.id)) {
-        setSelectedImages(prev => prev.filter(id => id !== image.id));
-      } else {
-        setSelectedImages(prev => [...prev, image.id]);
-      }
+      if (selectedImages.includes(image.id)) setSelectedImages(prev => prev.filter(id => id !== image.id));
+      else setSelectedImages(prev => [...prev, image.id]);
       return;
     }
-    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+    const coords = getCanvasCoords(e.clientX, e.clientY);
     setDragImage(image);
-    setDragOffset({ x: x - image.x, y: y - image.y });
+    setDragOffset({ x: coords.x - image.x, y: coords.y - image.y });
   };
 
   const handleImageMouseMove = (e, image) => {
     if (!dragImage || dragImage.id !== image.id) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
-    const newX = Math.max(0, Math.min(canvasSize - image.width, x - dragOffset.x));
-    const newY = Math.max(0, Math.min(canvasSize - image.height, y - dragOffset.y));
-    setImages(prev => prev.map(img =>
-      img.id === image.id ? { ...img, x: newX, y: newY } : img
-    ));
+    e.stopPropagation(); e.preventDefault();
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    const nx = Math.max(0, Math.min(canvasSize - image.width, coords.x - dragOffset.x));
+    const ny = Math.max(0, Math.min(canvasSize - image.height, coords.y - dragOffset.y));
+    setImages(prev => prev.map(img => img.id === image.id ? { ...img, x: nx, y: ny } : img));
   };
 
-  const handleImageMouseUp = (e, image) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setDragImage(null);
-  };
+  const handleImageMouseUp = (e) => { e.stopPropagation(); setDragImage(null); };
 
   const handleImageTouchStart = (e, image) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     if (isAdmin) {
-      if (selectedImages.includes(image.id)) {
-        setSelectedImages(prev => prev.filter(id => id !== image.id));
-      } else {
-        setSelectedImages(prev => [...prev, image.id]);
-      }
+      if (selectedImages.includes(image.id)) setSelectedImages(prev => prev.filter(id => id !== image.id));
+      else setSelectedImages(prev => [...prev, image.id]);
       return;
     }
-    const touch = e.touches[0];
-    const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
+    const t = e.touches[0];
+    const coords = getCanvasCoords(t.clientX, t.clientY);
     setDragImage(image);
-    setDragOffset({ x: x - image.x, y: y - image.y });
+    setDragOffset({ x: coords.x - image.x, y: coords.y - image.y });
   };
 
   const handleImageTouchMove = (e, image) => {
     if (!dragImage || dragImage.id !== image.id) return;
     if (e.touches.length !== 1) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const touch = e.touches[0];
-    const { x, y } = getCanvasCoords(touch.clientX, touch.clientY);
-    const newX = Math.max(0, Math.min(canvasSize - image.width, x - dragOffset.x));
-    const newY = Math.max(0, Math.min(canvasSize - image.height, y - dragOffset.y));
-    setImages(prev => prev.map(img =>
-      img.id === image.id ? { ...img, x: newX, y: newY } : img
-    ));
+    e.stopPropagation(); e.preventDefault();
+    const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+    const nx = Math.max(0, Math.min(canvasSize - image.width, coords.x - dragOffset.x));
+    const ny = Math.max(0, Math.min(canvasSize - image.height, coords.y - dragOffset.y));
+    setImages(prev => prev.map(img => img.id === image.id ? { ...img, x: nx, y: ny } : img));
   };
 
-  const handleImageTouchEnd = (e, image) => {
-    e.stopPropagation();
-    setDragImage(null);
-  };
+  const handleImageTouchEnd = (e) => { e.stopPropagation(); setDragImage(null); };
 
   const copyDouyin = async () => {
-    const text = '70745340154';
     try {
-      await navigator.clipboard.writeText(text);
-      alert('抖音号已复制：' + text);
+      await navigator.clipboard.writeText('70745340154');
+      alert('抖音号已复制：70745340154');
     } catch (err) {
       const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand('copy');
-        alert('抖音号已复制：' + text);
-      } catch (e) {
-        alert('复制失败，请手动复制：' + text);
-      }
+      ta.value = '70745340154';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); alert('抖音号已复制：70745340154'); }
+      catch (e) { alert('复制失败，请手动复制'); }
       document.body.removeChild(ta);
     }
   };
@@ -602,25 +471,18 @@ function App() {
   const handleDeleteImage = async (imageId) => {
     if (!confirm('确定要删除这张图片吗？')) return;
     try {
-      const res = await fetch(`${API_URL}/api/images/${imageId}`, {
-        method: 'DELETE'
-      });
+      const res = await fetch(API_URL + '/api/images/' + imageId, { method: 'DELETE' });
       const data = await res.json();
-      if (data.success) {
-        fetchImages();
-      }
-    } catch (err) {
-      console.error('Delete failed:', err);
-    }
+      if (data.success) fetchImages();
+    } catch (err) { console.error(err); }
   };
 
+  // 管理员功能
   const handleAdminLogin = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/admin/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ password: adminPassword })
+      const res = await fetch(API_URL + '/api/admin/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ password: adminPassword })
       });
       const data = await res.json();
       if (data.success) {
@@ -628,124 +490,78 @@ function App() {
         setShowAdminLogin(false);
         setAdminPassword('');
         setAdminError('');
-      } else {
-        setAdminError(data.error || '密码错误');
-      }
-    } catch (err) {
-      setAdminError('登录失败');
-    }
+      } else setAdminError(data.error || '密码错误');
+    } catch (err) { setAdminError('登录失败'); }
   };
 
   const handleAdminLogout = async () => {
-    await fetch(`${API_URL}/api/admin/logout`, { credentials: 'include' });
-    setIsAdmin(false);
-    setSelectedImages([]);
+    await fetch(API_URL + '/api/admin/logout', { credentials: 'include' });
+    setIsAdmin(false); setSelectedImages([]);
   };
 
   const handleDeleteSelected = async () => {
     if (selectedImages.length === 0) return;
     try {
-      const res = await fetch(`${API_URL}/api/admin/images`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ ids: selectedImages })
+      const res = await fetch(API_URL + '/api/admin/images', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({ ids: selectedImages })
       });
       const data = await res.json();
-      if (data.success) {
-        fetchImages();
-        setSelectedImages([]);
-      }
-    } catch (err) {
-      console.error('Delete failed:', err);
-    }
+      if (data.success) { fetchImages(); setSelectedImages([]); }
+    } catch (err) { console.error(err); }
   };
 
   const handleDeleteAllImages = async () => {
     if (!confirm('确定要删除所有图片吗？')) return;
     try {
-      const res = await fetch(`${API_URL}/api/admin/images`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({})
+      const res = await fetch(API_URL + '/api/admin/images', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', body: JSON.stringify({})
       });
       const data = await res.json();
-      if (data.success) {
-        fetchImages();
-        setSelectedImages([]);
-      }
-    } catch (err) {
-      console.error('Delete all failed:', err);
-    }
+      if (data.success) { fetchImages(); setSelectedImages([]); }
+    } catch (err) { console.error(err); }
   };
 
   const handleClearCanvas = async () => {
     if (!confirm('确定要清空画布上的所有涂鸦吗？')) return;
     try {
-      const res = await fetch(`${API_URL}/api/admin/pixels`, {
-        method: 'DELETE',
-        credentials: 'include'
-      });
+      const res = await fetch(API_URL + '/api/admin/pixels', { method: 'DELETE', credentials: 'include' });
       const data = await res.json();
       if (data.success) {
         setPixels([]);
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvasSize, canvasSize);
-        }
+        const cv = canvasRef.current;
+        if (cv) cv.getContext('2d').clearRect(0, 0, canvasSize, canvasSize);
       }
-    } catch (err) {
-      console.error('Clear canvas failed:', err);
-    }
+    } catch (err) { console.error(err); }
   };
 
-  const getImageUrl = (filename) => `${API_URL}/uploads/${filename}`;
-
-  const resetView = () => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
-  };
+  const getImageUrl = (filename) => API_URL + '/uploads/' + filename;
+  const resetView = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
 
   return (
     <div className="relative w-full h-full touch-none select-none" style={{ overflow: 'hidden' }}>
       <div
         ref={containerRef}
-        className="canvas-container"
         style={{
-          width: '100%',
-          height: '100%',
-          position: 'relative',
-          overflow: 'hidden',
-          background: 'linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px), #0a0a1a',
+          width: '100%', height: '100%', position: 'relative', overflow: 'hidden',
+          background: 'linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px), #0a0a1a',
           backgroundSize: '50px 50px'
         }}
       >
         <div
-          className="absolute"
           style={{
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-            transformOrigin: '0 0',
-            width: canvasSize,
-            height: canvasSize,
+            transformOrigin: '0 0', width: canvasSize, height: canvasSize, position: 'absolute',
             willChange: 'transform'
           }}
         >
-          <div
-            className="relative"
-            style={{
-              width: canvasSize,
-              height: canvasSize,
-              background: '#ffffff'
-            }}
-          >
+          <div style={{ width: canvasSize, height: canvasSize, background: '#ffffff', position: 'relative' }}>
             <canvas
               ref={canvasRef}
               width={canvasSize}
               height={canvasSize}
-              className="absolute inset-0"
-              style={{ touchAction: 'none', cursor: isPanning ? 'grabbing' : 'crosshair' }}
+              style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: isPanning ? 'grabbing' : 'crosshair' }}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -760,46 +576,41 @@ function App() {
             {images.map(img => (
               <div
                 key={img.id}
-                className={`absolute cursor-move border-2 transition-all ${
-                  selectedImages.includes(img.id) ? 'border-red-500' : 'border-transparent hover:border-blue-400/60'
-                }`}
                 style={{
-                  left: img.x,
-                  top: img.y,
-                  width: img.width,
-                  height: img.height,
-                  touchAction: 'none'
+                  position: 'absolute', left: img.x, top: img.y,
+                  width: img.width, height: img.height, touchAction: 'none',
+                  border: selectedImages.includes(img.id) ? '2px solid #ef4444' : '2px solid transparent',
+                  cursor: 'move'
                 }}
                 onMouseDown={(e) => handleImageMouseDown(e, img)}
                 onMouseMove={(e) => handleImageMouseMove(e, img)}
-                onMouseUp={(e) => handleImageMouseUp(e, img)}
-                onMouseLeave={(e) => handleImageMouseUp(e, img)}
+                onMouseUp={handleImageMouseUp}
+                onMouseLeave={handleImageMouseUp}
                 onTouchStart={(e) => handleImageTouchStart(e, img)}
                 onTouchMove={(e) => handleImageTouchMove(e, img)}
-                onTouchEnd={(e) => handleImageTouchEnd(e, img)}
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteImage(img.id);
-                }}
+                onTouchEnd={handleImageTouchEnd}
+                onDoubleClick={(e) => { e.stopPropagation(); handleDeleteImage(img.id); }}
               >
                 <img
                   src={getImageUrl(img.filename)}
                   alt=""
-                  className="w-full h-full object-contain pointer-events-none"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
                   draggable={false}
                 />
                 <button
-                  className="absolute -top-3 -right-3 w-7 h-7 bg-red-500 text-white text-sm rounded-full shadow-md hover:bg-red-600 z-10 flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteImage(img.id);
+                  style={{
+                    position: 'absolute', top: -12, right: -12, width: 28, height: 28,
+                    background: '#ef4444', color: '#fff', fontSize: 14,
+                    borderRadius: '50%', border: 'none', cursor: 'pointer', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', zIndex: 10
                   }}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteImage(img.id); }}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
                   ✕
                 </button>
                 {isAdmin && (
-                  <div className="absolute top-0 left-0 bg-tech-dark/80 text-white text-xs px-1">
+                  <div style={{ position: 'absolute', top: 0, left: 0, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, padding: '2px 4px' }}>
                     {new Date(img.upload_date).toLocaleString()}
                   </div>
                 )}
@@ -809,323 +620,202 @@ function App() {
         </div>
       </div>
 
-      <div className="fixed top-4 left-4 z-50 flex flex-col gap-2">
-        <div className="tech-button flex items-center gap-2">
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/gif"
-            onChange={handleImageUpload}
-            className="hidden"
-            id="upload-btn"
-            disabled={isUploading}
-          />
+      {/* 左上角：上传按钮 */}
+      <div style={{ position: 'fixed', top: 16, left: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{
+          background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+          color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+        }}>
           <label htmlFor="upload-btn">
             {isUploading ? '上传中...' : '📤 上传图片'}
           </label>
+          <input
+            type="file" accept="image/jpeg,image/png,image/gif"
+            onChange={handleImageUpload} style={{ display: 'none' }}
+            id="upload-btn" disabled={isUploading}
+          />
         </div>
-        <span className="text-white/70 text-sm bg-tech-dark/50 px-3 py-1 rounded">
+        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, background: 'rgba(0,0,0,0.4)', padding: '4px 12px', borderRadius: 8, textAlign: 'center' }}>
           今日剩余: {uploadRemaining}/2
-        </span>
-        <div className="bg-tech-dark/70 backdrop-blur-md border border-tech-blue/30 rounded-xl p-2 text-xs text-white/70">
+        </div>
+        <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 8, padding: 8, fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
           <div>缩放: {Math.round(scale * 100)}%</div>
-          <button
-            onClick={resetView}
-            className="mt-1 w-full px-2 py-1 bg-tech-blue/20 hover:bg-tech-blue/40 rounded text-tech-blue transition-colors"
-          >
+          <button onClick={resetView} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(0,212,255,0.2)', color: '#00d4ff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
             重置视图
           </button>
         </div>
       </div>
 
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-[220px]">
-        <div className="bg-tech-dark/90 backdrop-blur-md border border-tech-blue/30 rounded-xl p-3">
-          <h3 className="text-tech-blue font-semibold mb-2 text-sm">画笔</h3>
-          <div className="flex flex-col gap-2">
-            <div>
-              <label className="text-white/70 text-xs block mb-1">颜色</label>
-              <input
-                type="color"
-                value={brushColor}
-                onChange={(e) => setBrushColor(e.target.value)}
-                className="w-full h-8 rounded cursor-pointer"
-              />
-            </div>
-            <div>
-              <label className="text-white/70 text-xs block mb-1">粗细: {brushSize}px</label>
-              <input
-                type="range"
-                min="1"
-                max="50"
-                value={brushSize}
-                onChange={(e) => setBrushSize(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="text-white/70 text-xs block mb-1">硬度: {100 - brushSoftness}%</label>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={brushSoftness}
-                onChange={(e) => setBrushSoftness(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="text-white/70 text-xs block mb-1">透明度: {brushOpacity}%</label>
-              <input
-                type="range"
-                min="1"
-                max="100"
-                value={brushOpacity}
-                onChange={(e) => setBrushOpacity(Number(e.target.value))}
-                className="w-full"
-              />
-            </div>
-          </div>
+      {/* 右上角：画笔 + 管理 */}
+      <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 220 }}>
+        <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 12 }}>
+          <h3 style={{ color: '#00d4ff', fontSize: 13, marginBottom: 8 }}>画笔</h3>
+          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>颜色</div>
+          <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{ width: '100%', height: 30, borderRadius: 4, marginTop: 2, marginBottom: 8, cursor: 'pointer' }} />
+          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>粗细: {brushSize}px</div>
+          <input type="range" min="1" max="50" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
+          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>硬度: {100 - brushSoftness}%</div>
+          <input type="range" min="0" max="100" value={brushSoftness} onChange={(e) => setBrushSoftness(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
+          <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>透明度: {brushOpacity}%</div>
+          <input type="range" min="1" max="100" value={brushOpacity} onChange={(e) => setBrushOpacity(Number(e.target.value))} style={{ width: '100%' }} />
         </div>
 
         {!isAdmin ? (
-          <button className="tech-button text-sm" onClick={() => setShowAdminLogin(true)}>
+          <button style={{
+            background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+            color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 13
+          }} onClick={() => setShowAdminLogin(true)}>
             🔑 管理后台
           </button>
         ) : (
-          <div className="bg-tech-dark/90 backdrop-blur-md border border-red-500/50 rounded-xl p-3">
-            <h3 className="text-red-400 font-semibold mb-2 text-sm">管理员</h3>
-            <div className="space-y-2">
-              <button className="w-full tech-button text-red-400 text-xs" onClick={handleDeleteSelected}>
-                删除选中 ({selectedImages.length})
-              </button>
-              <button className="w-full tech-button text-red-400 text-xs" onClick={handleDeleteAllImages}>
-                清空图片
-              </button>
-              <button className="w-full tech-button text-red-400 text-xs" onClick={handleClearCanvas}>
-                清空涂鸦
-              </button>
-              <button className="w-full tech-button text-white/70 text-xs" onClick={handleAdminLogout}>
-                退出
-              </button>
-            </div>
+          <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: 12, padding: 12 }}>
+            <h3 style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>管理员</h3>
+            <button onClick={handleDeleteSelected} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+              删除选中 ({selectedImages.length})
+            </button>
+            <button onClick={handleDeleteAllImages} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+              清空图片
+            </button>
+            <button onClick={handleClearCanvas} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+              清空涂鸦
+            </button>
+            <button onClick={handleAdminLogout} style={{ width: '100%', padding: '6px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>
+              退出
+            </button>
           </div>
         )}
       </div>
 
-      <div className="fixed bottom-4 left-4 z-50">
-        <button
-          className="tech-button flex items-center gap-2"
-          onClick={() => setShowDonation(true)}
-        >
+      {/* 左下角：捐款按钮 */}
+      <div style={{ position: 'fixed', bottom: 16, left: 16, zIndex: 50 }}>
+        <button onClick={() => setShowDonation(true)} style={{
+          background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+          color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+        }}>
           💖 支持我们
         </button>
       </div>
 
-      <div className="fixed bottom-4 right-4 z-50 text-xs text-white/40 bg-tech-dark/50 px-2 py-1 rounded max-w-[300px] text-right">
+      {/* 右下角：操作提示 */}
+      <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 50, fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: 6, maxWidth: 320, textAlign: 'right' }}>
         左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放
       </div>
 
+      {/* 上传进度 */}
       {isUploading && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[90]">
-          <div className="bg-tech-dark border border-tech-blue/50 rounded-xl p-6 w-80 text-center">
-            <h3 className="text-tech-blue font-semibold mb-4">正在上传...</h3>
-            <div className="w-full bg-white/10 rounded-full h-4 overflow-hidden">
-              <div
-                className="h-full bg-tech-blue transition-all duration-200"
-                style={{ width: `${uploadProgress}%` }}
-              />
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 90 }}>
+          <div style={{ background: '#1a1a2e', border: '1px solid rgba(0,212,255,0.5)', borderRadius: 12, padding: 24, width: 320, textAlign: 'center' }}>
+            <h3 style={{ color: '#00d4ff', fontSize: 16, marginBottom: 16 }}>正在上传...</h3>
+            <div style={{ width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: 999, height: 12, overflow: 'hidden' }}>
+              <div style={{ width: `${uploadProgress}%`, height: '100%', background: '#00d4ff', transition: 'width 0.2s' }} />
             </div>
-            <p className="text-white/70 mt-3 text-sm">{uploadProgress}%</p>
+            <p style={{ color: 'rgba(255,255,255,0.7)', marginTop: 12, fontSize: 13 }}>{uploadProgress}%</p>
           </div>
         </div>
       )}
 
+      {/* 上传成功提示 */}
       {uploadMessage && (
-        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[95] bg-green-600 text-white px-6 py-3 rounded-xl font-semibold">
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 95, background: '#16a34a', color: '#fff', padding: '12px 24px', borderRadius: 12, fontSize: 16, fontWeight: 600 }}>
           {uploadMessage}
         </div>
       )}
 
+      {/* 上传确认弹窗 */}
       {showConfirm && confirmData && (
-        <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]"
-          onClick={cancelUpload}
-        >
-          <div
-            className="bg-tech-dark border border-tech-blue/30 rounded-xl p-6 text-center max-w-md"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-tech-blue font-semibold text-lg mb-3">确认上传</h3>
-            <div className="mb-3 flex items-center justify-center">
-              <img
-                src={confirmData.preview}
-                alt="预览"
-                style={{
-                  imageRendering: 'pixelated',
-                  width: Math.min(200, Math.max(80, confirmData.width * 4)),
-                  height: 'auto',
-                  maxHeight: 200,
-                  borderRadius: 8,
-                  border: '1px solid #555',
-                  background: '#fff'
-                }}
-              />
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }} onClick={cancelUpload}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: '#1a1a2e', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 24, textAlign: 'center', maxWidth: 400 }}>
+            <h3 style={{ color: '#00d4ff', fontSize: 18, marginBottom: 16 }}>确认上传</h3>
+            <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+              <img src={confirmData.preview} alt="预览" style={{
+                imageRendering: 'pixelated',
+                width: Math.min(200, Math.max(80, confirmData.width * 4)),
+                height: 'auto', maxHeight: 200, borderRadius: 8,
+                border: '1px solid #555', background: '#fff'
+              }} />
             </div>
-            <div className="text-white/70 text-sm mb-2 space-y-1">
-              <div>缩小后尺寸：{confirmData.width} × {confirmData.height} 像素</div>
-              <div>原大小：{confirmData.origSize} KB → {confirmData.newSize} KB</div>
-              <div className="text-xs text-tech-blue">（已自动缩小到 ≤ 50×50 以内）</div>
+            <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 4 }}>
+              尺寸: {confirmData.width} × {confirmData.height} 像素
             </div>
-            <div className="flex gap-3 justify-center mt-4">
-              <button
-              className="tech-button"
-              onClick={confirmUpload}
-            >
-              ✓ 确认上传
-            </button>
-            <button
-              className="tech-button text-white/70"
-              onClick={cancelUpload}
-            >
-              取消
-            </button>
+            <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 4 }}>
+              原大小: {confirmData.origSize} KB → {confirmData.newSize} KB
+            </div>
+            <div style={{ color: '#00d4ff', fontSize: 12, marginBottom: 20 }}>（已自动缩小到 ≤ 50 × 50 像素以内）</div>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+              <button onClick={confirmUpload} style={{
+                background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+                color: '#00d4ff', padding: '8px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+              }}>
+                ✓ 确认上传
+              </button>
+              <button onClick={cancelUpload} style={{
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.7)', padding: '8px 20px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+              }}>
+                取消
+              </button>
+            </div>
           </div>
         </div>
       )}
 
+      {/* 捐款弹窗 - 传奇风格抖音号 */}
       {showDonation && (
-        <div
-          className="fixed inset-0 bg-black/85 flex items-center justify-center z-[100] overflow-hidden"
-          onClick={() => setShowDonation(false)}
-        >
-          <div
-            className="absolute inset-0"
-            style={{
-              background: 'radial-gradient(circle at 50% 50%, rgba(255,200,0,0.15) 0%, rgba(255,100,0,0.05) 40%, transparent 70%)',
-              animation: 'legendPulse 2s ease-in-out infinite'
-            }}
-          />
-          <div
-            className="relative"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'linear-gradient(180deg, #3a1c00 0%, #1a0800 100%)',
-              border: '4px solid #ffcc00',
-              borderRadius: '12px',
-              boxShadow: '0 0 40px rgba(255, 170, 0, 0.8), 0 0 80px rgba(255, 80, 0, 0.5), inset 0 0 30px rgba(255, 200, 0, 0.1)',
-              padding: '40px 50px',
-              textAlign: 'center',
-              animation: 'legendShake 0.15s ease-in-out infinite'
-            }}
-          >
-            <div
-              style={{
-                fontSize: '24px',
-                fontWeight: 900,
-                color: '#ffdd44',
-                textShadow: '0 0 10px #ff6600, 2px 2px 0 #660000, 4px 4px 0 #330000',
-                letterSpacing: '4px',
-                marginBottom: '20px'
-              }}
-            >
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, overflow: 'hidden' }} onClick={() => setShowDonation(false)}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 50%, rgba(255,200,0,0.15) 0%, rgba(255,100,0,0.05) 40%, transparent 70%)', animation: 'legendPulse 2s ease-in-out infinite' }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: 'linear-gradient(180deg, #3a1c00 0%, #1a0800 100%)',
+            border: '4px solid #ffcc00', borderRadius: 12, padding: '40px 50px', textAlign: 'center',
+            boxShadow: '0 0 40px rgba(255,170,0,0.8), 0 0 80px rgba(255,80,0,0.5), inset 0 0 30px rgba(255,200,0,0.1)',
+            animation: 'legendShake 0.15s ease-in-out infinite', position: 'relative'
+          }}>
+            <div style={{ fontSize: 24, fontWeight: 900, color: '#ffdd44', textShadow: '0 0 10px #ff6600, 2px 2px 0 #660000, 4px 4px 0 #330000', letterSpacing: 4, marginBottom: 20 }}>
               ⚔️ 支持我们 ⚔️
             </div>
-
-            <div
-              style={{
-                fontSize: '18px',
-                color: '#ffaa00',
-                textShadow: '1px 1px 0 #330000',
-                marginBottom: '15px',
-                fontWeight: 700
-              }}
-            >
-              抖音号
-            </div>
-
-            <div
-              style={{
-                fontSize: '64px',
-                fontWeight: 900,
-                color: '#fff',
-                textShadow: '0 0 20px #ffcc00, 0 0 40px #ff6600, 3px 3px 0 #660000, 6px 6px 0 #330000',
-                letterSpacing: '6px',
-                fontFamily: 'Impact, sans-serif',
-                padding: '15px 30px',
-                background: 'linear-gradient(180deg, rgba(255,200,0,0.2) 0%, rgba(255,100,0,0.1) 100%)',
-                border: '2px dashed #ffaa00',
-                borderRadius: '8px',
-                marginBottom: '25px',
-                animation: 'legendGlow 1.5s ease-in-out infinite alternate'
-              }}
-            >
+            <div style={{ fontSize: 18, color: '#ffaa00', textShadow: '1px 1px 0 #330000', marginBottom: 15, fontWeight: 700 }}>抖音号</div>
+            <div style={{
+              fontSize: 64, fontWeight: 900, color: '#fff',
+              textShadow: '0 0 20px #ffcc00, 0 0 40px #ff6600, 3px 3px 0 #660000, 6px 6px 0 #330000',
+              letterSpacing: 6, fontFamily: 'Impact, sans-serif', padding: '15px 30px',
+              background: 'linear-gradient(180deg, rgba(255,200,0,0.2) 0%, rgba(255,100,0,0.1) 100%)',
+              border: '2px dashed #ffaa00', borderRadius: 8, marginBottom: 25,
+              animation: 'legendGlow 1.5s ease-in-out infinite alternate'
+            }}>
               70745340154
             </div>
-
-            <button
-              onClick={copyDouyin}
-              style={{
-                background: 'linear-gradient(180deg, #ffaa00 0%, #cc5500 100%)',
-                color: '#fff',
-                fontSize: '20px',
-                fontWeight: 900,
-                padding: '12px 40px',
-                border: '3px solid #ffcc00',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                textShadow: '1px 1px 0 #660000',
-                boxShadow: '0 4px 0 #663300, 0 0 20px rgba(255, 170, 0, 0.6)',
-                letterSpacing: '2px'
-              }}
-            >
+            <button onClick={copyDouyin} style={{
+              background: 'linear-gradient(180deg, #ffaa00 0%, #cc5500 100%)',
+              color: '#fff', fontSize: 20, fontWeight: 900, padding: '12px 40px',
+              border: '3px solid #ffcc00', borderRadius: 8, cursor: 'pointer',
+              textShadow: '1px 1px 0 #660000',
+              boxShadow: '0 4px 0 #663300, 0 0 20px rgba(255,170,0,0.6)', letterSpacing: 2
+            }}>
               📋 一键复制
             </button>
-
-            <div
-              style={{
-                marginTop: '20px',
-                fontSize: '14px',
-                color: '#ffaa00',
-                opacity: 0.7
-              }}
-            >
-              点击空白处关闭
-            </div>
+            <div style={{ marginTop: 20, fontSize: 14, color: '#ffaa00', opacity: 0.7 }}>点击空白处关闭</div>
           </div>
-
-          <style>
-            @keyframes legendGlow {
-              0% { text-shadow: 0 0 20px #ffcc00, 0 0 40px #ff6600, 3px 3px 0 #660000, 6px 6px 0 #330000; }
-              100% { text-shadow: 0 0 30px #ffee66, 0 0 60px #ffaa00, 3px 3px 0 #660000, 6px 6px 0 #330000; }
-            }
-            @keyframes legendPulse {
-              0%, 100% { opacity: 0.8; transform: scale(1); }
-              50% { opacity: 1; transform: scale(1.05); }
-            }
-            @keyframes legendShake {
-              0%, 100% { transform: translate(0, 0); }
-              25% { transform: translate(0.5px, 0); }
-              75% { transform: translate(-0.5px, 0); }
-            }
-          </style>
         </div>
       )}
 
+      {/* 管理员登录 */}
       {showAdminLogin && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100]">
-          <div className="bg-tech-dark border border-tech-blue/30 rounded-xl p-6 w-80">
-            <h3 className="text-tech-blue font-semibold text-xl mb-4 text-center">管理员登录</h3>
-            {adminError && <p className="text-red-400 text-sm mb-3">{adminError}</p>}
-            <input
-              type="password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              placeholder="输入管理员密码"
-              className="w-full px-4 py-2 bg-white/10 border border-tech-blue/30 rounded-lg text-white mb-4 focus:outline-none focus:border-tech-blue"
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }}
-            />
-            <div className="flex gap-2">
-              <button className="flex-1 tech-button" onClick={handleAdminLogin}>登录</button>
-              <button className="flex-1 tech-button text-white/70" onClick={() => setShowAdminLogin(false)}>取消</button>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ background: '#1a1a2e', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 24, width: 320 }}>
+            <h3 style={{ color: '#00d4ff', fontSize: 20, marginBottom: 16, textAlign: 'center' }}>管理员登录</h3>
+            {adminError && <p style={{ color: '#ef4444', fontSize: 13, marginBottom: 12 }}>{adminError}</p>}
+            <input type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="输入管理员密码" onKeyDown={(e) => { if (e.key === 'Enter') handleAdminLogin(); }} style={{
+              width: '100%', padding: '8px 16px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(0,212,255,0.3)',
+              borderRadius: 8, color: '#fff', marginBottom: 16, outline: 'none', boxSizing: 'border-box'
+            }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={handleAdminLogin} style={{
+                flex: 1, background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
+                color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+              }}>登录</button>
+              <button onClick={() => setShowAdminLogin(false)} style={{
+                flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.7)', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14
+              }}>取消</button>
             </div>
           </div>
         </div>
