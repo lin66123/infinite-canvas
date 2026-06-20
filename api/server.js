@@ -102,12 +102,24 @@ app.use(cookieParser());
 app.use(express.json());
 app.use('/uploads', express.static(uploadsDir));
 
-// 服务前端页面（构建后的 React 应用）
-const frontendDist = join(__dirname, '..', 'client', 'dist');
-if (existsSync(frontendDist)) {
+// 尝试多个候选路径找到前端构建产物
+const candidatePaths = [
+  join(__dirname, '..', 'client', 'dist'),
+  join(process.cwd(), 'client', 'dist'),
+  join(process.cwd(), '..', 'client', 'dist'),
+  join(__dirname, '..', '..', 'client', 'dist'),
+];
+const frontendDist = candidatePaths.find(p => existsSync(join(p, 'index.html')));
+
+console.log('\n--- 前端文件路径检查 ---');
+candidatePaths.forEach(p => console.log('  ' + p + ' -> ' + (existsSync(join(p, 'index.html')) ? '✅ 找到' : '❌ 未找到')));
+console.log('  使用路径: ' + (frontendDist || '(未找到，将显示占位)'));
+console.log('------------------------\n');
+
+if (frontendDist) {
   app.use(express.static(frontendDist));
-  // SPA 回退：未匹配的 GET 请求返回 index.html
-  app.get('/', (req, res) => {
+  // SPA 回退：所有非 API 的 GET 请求返回 index.html
+  app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(join(frontendDist, 'index.html'));
   });
 } else {

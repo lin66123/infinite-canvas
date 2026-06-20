@@ -1,13 +1,10 @@
 {
   "name": "infinite-canvas",
   "version": "1.0.0",
-  "description": "Infinite Canvas - Online collaborative drawing platform",
   "type": "module",
+  "description": "无限画布 - 任何人都可以涂鸦画画的在线画布",
   "scripts": {
-    "start": "cd api && npm install && node server.js",
-    "install-deps": "cd api && npm install"
-  },
-  "engines": {
-    "node": ">=18"
+    "build": "cd client && npm install && npm run build && cd ../api && npm install",
+    "start": "node api/server.js"
   }
 }
