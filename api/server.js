@@ -423,6 +423,72 @@ app.get('/api/upload/status', (req, res) => {
   });
 });
 
+// 消耗一次上传额度（进入盖章模式时调用，确认名额足够）
+app.post('/api/upload/consume', (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const today = new Date().toISOString().split('T')[0];
+
+  db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+
+    db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, limitRow) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      const dailyLimit = parseInt(limitRow?.value || '2');
+      const currentCount = row?.count || 0;
+
+      if (currentCount >= dailyLimit) {
+        return res.status(403).json({ error: 'Daily upload limit reached' });
+      }
+
+      if (row) {
+        db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
+      } else {
+        db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
+      }
+
+      res.json({ success: true, count: currentCount + 1, remaining: dailyLimit - currentCount - 1 });
+    });
+  });
+});
+
+// 管理员：橡皮擦 - 删除指定范围内的像素
+app.delete('/api/admin/pixels/range', (req, res) => {
+  if (req.cookies.admin !== 'true') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const x = parseInt(req.body.x);
+  const y = parseInt(req.body.y);
+  const size = Math.max(1, parseInt(req.body.size) || 1);
+
+  if (isNaN(x) || isNaN(y)) {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+
+  const half = Math.floor(size / 2);
+  const x1 = x - half;
+  const y1 = y - half;
+  const x2 = x + half;
+  const y2 = y + half;
+
+  db.run(
+    'DELETE FROM canvas_pixels WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?',
+    [x1, x2, y1, y2],
+    function (err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ success: true, deleted: this.changes || 0 });
+      }
+    }
+  );
+});
+
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(500).json({ error: err.message || 'Internal server error' });

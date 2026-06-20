@@ -42,6 +42,7 @@ function App() {
   const [dragImage, setDragImage] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [lastSaveTime, setLastSaveTime] = useState(Date.now());
+  const [lastEraseSaveTime, setLastEraseSaveTime] = useState(Date.now());
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -52,11 +53,14 @@ function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [stampMode, setStampMode] = useState(null);
   const [stampCursor, setStampCursor] = useState({ x: 1000, y: 1000 });
+  const [isEraser, setIsEraser] = useState(false);
+  const [eraserSize, setEraserSize] = useState(15);
 
   // refs
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const pendingPixels = useRef([]);
+  const pendingErase = useRef([]);
   const panStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   const touchStartRef = useRef({
     distance: 0, scale: 1, centerX: 0, centerY: 0,
@@ -83,15 +87,18 @@ function App() {
     ctx.globalAlpha = 1;
   }, [pixels, canvasSize]);
 
-  // ESC 键退出盖章模式
+  // ESC 键退出盖章模式 / 橡皮擦模式
   useEffect(() => {
-    if (!stampMode) return;
+    if (!stampMode && !isEraser) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') setStampMode(null);
+      if (e.key === 'Escape') {
+        if (stampMode) setStampMode(null);
+        if (isEraser) setIsEraser(false);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [stampMode]);
+  }, [stampMode, isEraser]);
 
   // API
   const fetchImages = async () => {
@@ -195,19 +202,29 @@ function App() {
     setShowConfirm(true);
   };
 
-  // 确认上传 -> 进入盖章模式
-  const confirmUpload = () => {
+  // 确认上传 -> 先消耗一次上传额度 -> 进入盖章模式
+  const confirmUpload = async () => {
     if (!confirmData) return;
+    // 先扣一次上传额度
+    try {
+      const resp = await fetch(API_URL + '/api/upload/consume', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await resp.json();
+      if (!data.success) {
+        alert('上传失败: ' + (data.error || '未知错误'));
+        return;
+      }
+    } catch (err) {
+      alert('网络错误，请重试');
+      return;
+    }
     setShowConfirm(false);
     setStampMode({
-      pixels: confirmData.pixels,
-      width: confirmData.width,
-      height: confirmData.height,
-    });
+      pixels: confirmData.pixels, width: confirmData.width, height: confirmData.height });
     setConfirmData(null);
-    if (uploadRemaining > 0) {
-      setUploadRemaining(uploadRemaining - 1);
-    }
+    fetchUploadStatus();
   };
 
   const cancelUpload = () => {
@@ -307,11 +324,69 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
+  // 橡皮擦：把指定范围的像素从 canvas 和数据库中删除
+  const erasePixel = useCallback((x, y) => {
+    if (x < 0 || x >= canvasSize || y < 0 || y >= canvasSize) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const halfSize = Math.floor(eraserSize / 2);
+
+    // 在本地 canvas 上清除对应区域
+    for (let i = -halfSize; i <= halfSize; i++) {
+      for (let j = -halfSize; j <= halfSize; j++) {
+        const px = x + i;
+        const py = y + j;
+        if (px >= 0 && px < canvasSize && py >= 0 && py < canvasSize) {
+          ctx.clearRect(px, py, 1, 1);
+        }
+      }
+    }
+
+    // 把要删除的范围加入队列，由 flushErase 统一发送
+    pendingErase.current.push({ x, y, size: eraserSize });
+
+    const now = Date.now();
+    if (now - lastEraseSaveTime > 300) {
+      setLastEraseSaveTime(now);
+      flushErase();
+    }
+  }, [eraserSize, canvasSize, lastEraseSaveTime]);
+
+  const flushErase = async () => {
+    if (pendingErase.current.length === 0) return;
+    const toErase = [...pendingErase.current];
+    pendingErase.current = [];
+
+    // 合并成一个最小外接矩形，减少请求数
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let maxSize = 1;
+    for (const e of toErase) {
+      const h = Math.floor(e.size / 2);
+      minX = Math.min(minX, e.x - h);
+      minY = Math.min(minY, e.y - h);
+      maxX = Math.max(maxX, e.x + h);
+      maxY = Math.max(maxY, e.y + h);
+      maxSize = Math.max(maxSize, e.size);
+    }
+    const cx = Math.floor((minX + maxX) / 2);
+    const cy = Math.floor((minY + maxY) / 2);
+    const size = Math.max(maxX - minX + 1, maxY - minY + 1, maxSize);
+
+    try {
+      await fetch(API_URL + '/api/admin/pixels/range', {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x: cx, y: cy, size: size }),
+      });
+    } catch (err) { console.error(err); }
+  };
+
   // 鼠标事件
   const handleMouseDown = (e) => {
     const coords = getCanvasCoords(e.clientX, e.clientY);
     if (stampMode) {
-      // 盖章模式：点击落下像素
       stampAt(coords.x, coords.y);
       return;
     }
@@ -321,6 +396,11 @@ function App() {
       return;
     }
     if (e.button !== 0) return;
+    if (isEraser) {
+      setIsDrawing(true); // 复用 isDrawing 表示正在擦
+      erasePixel(coords.x, coords.y);
+      return;
+    }
     if (dragImage) {
       const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
       const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
@@ -344,6 +424,7 @@ function App() {
       });
       return;
     }
+    if (isEraser && isDrawing) { erasePixel(coords.x, coords.y); return; }
     if (!isDrawing && !dragImage) return;
     if (isDrawing) drawPixel(coords.x, coords.y);
     else if (dragImage) {
@@ -354,13 +435,16 @@ function App() {
   };
 
   const handleMouseUp = () => {
-    if (isDrawing) flushPixels();
+    if (isDrawing) {
+      if (isEraser) flushErase();
+      else flushPixels();
+    }
     setIsDrawing(false);
     setIsPanning(false);
     setDragImage(null);
   };
 
-  // 在画布上盖章 -> 画像素 + 上传服务器
+  // 在画布上盖章 -> 画像素（与画画走相同的像素保存路径）
   const stampAt = useCallback(async (cx, cy) => {
     if (!stampMode) return;
     const { pixels, width, height } = stampMode;
@@ -369,8 +453,8 @@ function App() {
 
     const startX = cx - Math.floor(width / 2);
     const startY = cy - Math.floor(height / 2);
-    const toSend = [];
 
+    // 逐个像素画到 canvas + 推入待发送队列
     for (const p of pixels) {
       const px = startX + p.x;
       const py = startY + p.y;
@@ -378,27 +462,15 @@ function App() {
         ctx.globalAlpha = 1;
         ctx.fillStyle = p.color;
         ctx.fillRect(px, py, 1, 1);
-        toSend.push({ x: px, y: py, color: p.color });
+        pendingPixels.current.push({ x: px, y: py, color: p.color, opacity: 100 });
       }
     }
+    ctx.globalAlpha = 1;
 
-    // 发送到服务器（带每日上传限额检查）
-    if (toSend.length > 0) {
-      try {
-        const resp = await fetch(API_URL + '/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pixels: toSend }),
-        });
-        const data = await resp.json();
-        if (!data.success) {
-          alert('上传失败: ' + (data.error || '未知错误'));
-        }
-      } catch (err) { console.error(err); }
-    }
+    // 立即把像素发送到服务器（走 /api/draw，和画画一样）
+    await flushPixels();
 
     setStampMode(null);
-    fetchUploadStatus();
     setUploadMessage('盖章成功！');
     setTimeout(() => setUploadMessage(''), 2000);
   }, [stampMode, canvasSize]);
@@ -447,6 +519,9 @@ function App() {
         const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
         const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
         setImages(prev => prev.map(img => img.id === dragImage.id ? { ...img, x: nx, y: ny } : img));
+      } else if (isEraser) {
+        setIsDrawing(true);
+        erasePixel(coords.x, coords.y);
       } else {
         setIsDrawing(true);
         drawPixel(coords.x, coords.y);
@@ -483,7 +558,10 @@ function App() {
       return;
     }
     if (!isDrawing && !dragImage) return;
-    if (isDrawing) drawPixel(coords.x, coords.y);
+    if (isDrawing) {
+      if (isEraser) erasePixel(coords.x, coords.y);
+      else drawPixel(coords.x, coords.y);
+    }
     else if (dragImage) {
       const nx = Math.max(0, Math.min(canvasSize - dragImage.width, coords.x - dragOffset.x));
       const ny = Math.max(0, Math.min(canvasSize - dragImage.height, coords.y - dragOffset.y));
@@ -493,7 +571,10 @@ function App() {
 
   const handleTouchEnd = (e) => {
     if (e.touches.length === 0) {
-      if (isDrawing) flushPixels();
+      if (isDrawing) {
+        if (isEraser) flushErase();
+        else flushPixels();
+      }
       setIsDrawing(false);
       setIsPanning(false);
       setDragImage(null);
@@ -595,7 +676,7 @@ function App() {
 
   const handleAdminLogout = async () => {
     await fetch(API_URL + '/api/admin/logout', { credentials: 'include' });
-    setIsAdmin(false); setSelectedImages([]);
+    setIsAdmin(false); setSelectedImages([]); setIsEraser(false);
   };
 
   const handleDeleteSelected = async () => {
@@ -682,7 +763,7 @@ function App() {
               ref={canvasRef}
               width={canvasSize}
               height={canvasSize}
-              style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: stampMode ? 'copy' : (isPanning ? 'grabbing' : 'crosshair') }}
+              style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: stampMode ? 'copy' : (isEraser ? 'crosshair' : (isPanning ? 'grabbing' : 'crosshair')) }}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
@@ -813,6 +894,15 @@ function App() {
         ) : (
           <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: 12, padding: 12 }}>
             <h3 style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>管理员</h3>
+            <button onClick={() => { setIsEraser(!isEraser); }} style={{ width: '100%', padding: '6px', background: isEraser ? 'rgba(239,68,68,0.35)' : 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
+              {isEraser ? '✖ 退出擦除' : '✂ 橡皮擦模式'}
+            </button>
+            {isEraser && (
+              <div style={{ marginBottom: 6, padding: 8, border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginBottom: 4 }}>擦除大小: {eraserSize}px</div>
+                <input type="range" min="3" max="100" value={eraserSize} onChange={(e) => setEraserSize(Number(e.target.value))} style={{ width: '100%' }} />
+              </div>
+            )}
             <button onClick={handleDeleteSelected} style={{ width: '100%', padding: '6px', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontSize: 12, marginBottom: 6 }}>
               删除选中 ({selectedImages.length})
             </button>
@@ -841,7 +931,7 @@ function App() {
 
       {/* 右下角：操作提示 */}
       <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 50, fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: 6, maxWidth: 320, textAlign: 'right' }}>
-        {stampMode ? '🖱 点击画布任意位置盖章 | ESC 取消' : '左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放'}
+        {stampMode ? '🖱 点击画布任意位置盖章 | ESC 取消' : (isEraser ? '✂ 点击/拖动擦除像素 | 再次点击按钮退出' : '左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放')}
       </div>
 
       {/* 上传进度 */}
