@@ -22,6 +22,17 @@ try {
 
 const app = express();
 const port = process.env.PORT || 3001;
+app.set('trust proxy', true);
+
+// 获取客户端真实IP（兼容 Railway 代理）
+const getClientIp = (req) => {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) {
+    if (typeof xff === 'string') return xff.split(',')[0].trim();
+    if (Array.isArray(xff)) return xff[0].split(',')[0].trim();
+  }
+  return req.ip || req.connection.remoteAddress || 'unknown';
+};
 
 const adminPassword = 'zhanxnk';
 
@@ -191,7 +202,7 @@ app.get('/api/settings', (req, res) => {
 
 // 访客记录 + 在线人数
 app.post('/api/visit', (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress;
+  const ip = getClientIp(req);
   const ua = (req.headers['user-agent'] || '').substring(0, 500);
   db.run(
     'INSERT OR IGNORE INTO visitors (ip, user_agent, first_seen, last_seen) VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
@@ -233,7 +244,7 @@ app.post('/api/upload', (req, res) => {
       return res.status(400).json({ error: 'No pixel data' });
     }
 
-    const ip = req.ip || req.connection.remoteAddress;
+    const ip = getClientIp(req);
     const today = new Date().toISOString().split('T')[0];
 
     db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], (err, row) => {
@@ -241,7 +252,7 @@ app.post('/api/upload', (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      const dailyLimit = 2;
+      const dailyLimit = 1;
       const currentCount = row?.count || 0;
 
       if (currentCount >= dailyLimit) {
@@ -279,7 +290,7 @@ app.post('/api/upload', (req, res) => {
       return res.status(400).json({ error: err.message || 'Upload failed' });
     }
 
-    const ip = req.ip || req.connection.remoteAddress;
+    const ip = getClientIp(req);
     const today = new Date().toISOString().split('T')[0];
 
     db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], async (err, row) => {
@@ -287,7 +298,7 @@ app.post('/api/upload', (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      const dailyLimit = 2;
+      const dailyLimit = 1;
 
       const currentCount = row?.count || 0;
 
@@ -435,7 +446,7 @@ app.post('/api/admin/settings', (req, res) => {
 });
 
 app.get('/api/upload/status', (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress;
+  const ip = getClientIp(req);
   const today = new Date().toISOString().split('T')[0];
   
   db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], (err, row) => {
@@ -443,7 +454,7 @@ app.get('/api/upload/status', (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    const dailyLimit = 2;
+    const dailyLimit = 1;
     res.json({
       count: row?.count || 0,
       limit: dailyLimit,
@@ -454,7 +465,7 @@ app.get('/api/upload/status', (req, res) => {
 
 // 消耗一次上传额度（进入盖章模式时调用，确认名额足够）
 app.post('/api/upload/consume', (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress;
+  const ip = getClientIp(req);
   const today = new Date().toISOString().split('T')[0];
 
   db.get('SELECT count FROM upload_logs WHERE ip = ? AND date = ?', [ip, today], (err, row) => {
@@ -462,7 +473,7 @@ app.post('/api/upload/consume', (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    const dailyLimit = 2;
+    const dailyLimit = 1;
     const currentCount = row?.count || 0;
 
     if (currentCount >= dailyLimit) {

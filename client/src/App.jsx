@@ -31,7 +31,7 @@ function App() {
   const [brushSize, setBrushSize] = useState(3);
   const [brushSoftness, setBrushSoftness] = useState(0);
   const [brushOpacity, setBrushOpacity] = useState(100);
-  const [uploadRemaining, setUploadRemaining] = useState(2);
+  const [uploadRemaining, setUploadRemaining] = useState(1);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
