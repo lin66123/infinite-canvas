@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
-// API 地址：优先读取 URL 参数 ?api=xxx，然后读取 localStorage，最后用默认地址
+// API 地址：优先读取 URL 参数 ?api=xxx，然后读取 localStorage，最后用当前页面的 origin
 // 例如: https://你的域名.com/?api=http://localhost:3001
 // 例如: https://你的域名.com/?api=https://abc123.trycloudflare.com
-const DEFAULT_API_URL = 'https://infinite-canvas-production-b078.up.railway.app';
 function getApiUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -18,7 +17,14 @@ function getApiUrl() {
       return fromStorage.replace(/\/$/, '');
     }
   } catch (e) {}
-  return DEFAULT_API_URL;
+  // 默认使用当前页面的 origin（本地运行时就是本地服务器，Railway部署时就是Railway）
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:3001';
+    }
+    return window.location.origin;
+  }
+  return 'http://localhost:3001';
 }
 const API_URL = getApiUrl();
 

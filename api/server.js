@@ -5,7 +5,7 @@ import multer from 'multer';
 import sqlite3 from 'sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,6 +101,27 @@ app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
 app.use(express.json());
 app.use('/uploads', express.static(uploadsDir));
+
+// 服务前端页面（构建后的 React 应用）
+const frontendDist = join(__dirname, '..', 'client', 'dist');
+if (existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  // SPA 回退：未匹配的 GET 请求返回 index.html
+  app.get('/', (req, res) => {
+    res.sendFile(join(frontendDist, 'index.html'));
+  });
+} else {
+  app.get('/', (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;">
+        <h2>无限画布 - 后端服务运行中</h2>
+        <p>前端页面尚未构建。请先运行 <code>cd client && npm install && npm run build</code></p>
+        <p>API 状态：<a href="/api/images">/api/images</a></p>
+      </body></html>
+    `);
+  });
+}
 
 app.get('/api/images', (req, res) => {
   db.all('SELECT * FROM images ORDER BY upload_date DESC', (err, rows) => {
