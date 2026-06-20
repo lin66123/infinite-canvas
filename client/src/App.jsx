@@ -57,12 +57,15 @@ function App() {
   const [eraserSize, setEraserSize] = useState(15);
   const [onlineCount, setOnlineCount] = useState(0);
   const [visitorList, setVisitorList] = useState([]);
+  const [longPressSeconds, setLongPressSeconds] = useState(0);
+  const [showAdminTrigger, setShowAdminTrigger] = useState(false);
 
   // refs
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const pendingPixels = useRef([]);
   const pendingErase = useRef([]);
+  const longPressTimer = useRef(null);
   const panStartRef = useRef({ x: 0, y: 0, offsetX: 0, offsetY: 0 });
   const touchStartRef = useRef({
     distance: 0, scale: 1, centerX: 0, centerY: 0,
@@ -904,6 +907,9 @@ function App() {
           <button onClick={resetView} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(0,212,255,0.2)', color: '#00d4ff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
             重置视图
           </button>
+          <button onClick={() => { fetchImages(); fetchPixels(); }} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(34, 197, 94, 0.2)', color: '#22c55e', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
+            🔄 刷新画布
+          </button>
         </div>
       </div>
 
@@ -912,13 +918,80 @@ function App() {
         {/* 调色板：色卡 + 大色块，直接显示 */}
         <div style={{ background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 12, padding: 12 }}>
           <h3 style={{ color: '#00d4ff', fontSize: 13, marginBottom: 8 }}>🎨 颜色</h3>
-          {/* 大色块：直接显示当前颜色 */}
+          {/* 大色块：直接显示当前颜色（长按 10 秒触发管理员入口） */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div style={{
-              width: 44, height: 44, borderRadius: 10, background: brushColor,
-              border: '2px solid rgba(255,255,255,0.3)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-              flexShrink: 0
-            }} />
+            <div
+              onMouseDown={() => {
+                if (longPressTimer.current) return;
+                setLongPressSeconds(0);
+                let sec = 0;
+                longPressTimer.current = setInterval(() => {
+                  sec += 1;
+                  setLongPressSeconds(sec);
+                  if (sec >= 10) {
+                    clearInterval(longPressTimer.current);
+                    longPressTimer.current = null;
+                    setLongPressSeconds(0);
+                    setShowAdminTrigger(true);
+                    setShowAdminLogin(true);
+                  }
+                }, 1000);
+              }}
+              onMouseUp={() => {
+                if (longPressTimer.current) {
+                  clearInterval(longPressTimer.current);
+                  longPressTimer.current = null;
+                  setLongPressSeconds(0);
+                }
+              }}
+              onMouseLeave={() => {
+                if (longPressTimer.current) {
+                  clearInterval(longPressTimer.current);
+                  longPressTimer.current = null;
+                  setLongPressSeconds(0);
+                }
+              }}
+              onTouchStart={() => {
+                if (longPressTimer.current) return;
+                setLongPressSeconds(0);
+                let sec = 0;
+                longPressTimer.current = setInterval(() => {
+                  sec += 1;
+                  setLongPressSeconds(sec);
+                  if (sec >= 10) {
+                    clearInterval(longPressTimer.current);
+                    longPressTimer.current = null;
+                    setLongPressSeconds(0);
+                    setShowAdminTrigger(true);
+                    setShowAdminLogin(true);
+                  }
+                }, 1000);
+              }}
+              onTouchEnd={() => {
+                if (longPressTimer.current) {
+                  clearInterval(longPressTimer.current);
+                  longPressTimer.current = null;
+                  setLongPressSeconds(0);
+                }
+              }}
+              style={{
+                width: 44, height: 44, borderRadius: 10, background: brushColor,
+                border: longPressSeconds > 0 ? `2px solid #${Math.floor(200 + longPressSeconds * 5).toString(16).padStart(2, '0')}0000` : '2px solid rgba(255,255,255,0.3)',
+                boxShadow: longPressSeconds > 0
+                  ? `0 0 ${longPressSeconds * 3}px rgba(200, 0, 0, ${Math.min(0.8, longPressSeconds / 10)})`
+                  : '0 2px 8px rgba(0,0,0,0.4)',
+                flexShrink: 0, cursor: 'pointer', userSelect: 'none', position: 'relative',
+                transition: 'box-shadow 0.2s'
+              }}
+            >
+              {longPressSeconds > 0 && (
+                <div style={{
+                  position: 'absolute', inset: -4, borderRadius: 14,
+                  background: `conic-gradient(#ef4444 ${longPressSeconds * 10}%, transparent ${longPressSeconds * 10}%)`,
+                  opacity: 0.7, pointerEvents: 'none'
+                }} />
+              )}
+            </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{ width: '100%', height: 28, borderRadius: 6, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', padding: 0 }} />
               <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 4, textAlign: 'center', letterSpacing: 1, textTransform: 'uppercase' }}>{brushColor}</div>
@@ -947,7 +1020,7 @@ function App() {
           <input type="range" min="1" max="100" value={brushOpacity} onChange={(e) => setBrushOpacity(Number(e.target.value))} style={{ width: '100%' }} />
         </div>
 
-        {!isAdmin ? (
+        {showAdminTrigger && !isAdmin ? (
           <button style={{
             background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
             color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 13
