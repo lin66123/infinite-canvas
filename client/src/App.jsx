@@ -498,8 +498,8 @@ function App() {
     setDragImage(null);
   };
 
-  // 在画布上盖章 -> 画像素（与画画走相同的像素保存路径）
-  const stampAt = useCallback(async (cx, cy) => {
+  // 在画布上盖章 -> 画像素 + 立即退出盖章模式
+  const stampAt = (cx, cy) => {
     if (!stampMode) return;
     const { pixels, width, height } = stampMode;
     const ctx = canvasRef.current?.getContext('2d');
@@ -521,13 +521,14 @@ function App() {
     }
     ctx.globalAlpha = 1;
 
-    // 立即把像素发送到服务器（走 /api/draw，和画画一样）
-    await flushPixels();
-
+    // 立即退出盖章模式，强制切回画笔
     setStampMode(null);
     setUploadMessage('盖章成功！');
     setTimeout(() => setUploadMessage(''), 2000);
-  }, [stampMode, canvasSize]);
+
+    // 异步发送像素到服务器
+    flushPixels();
+  };
 
   // 滚轮缩放
   const handleWheel = (e) => {
