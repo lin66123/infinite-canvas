@@ -153,7 +153,7 @@ function App() {
     });
 
     // 计算目标尺寸（保持比例，最大50像素）
-    const maxPx = 50;
+    const maxPx = 70;
     let tw = imgInfo.width;
     let th = imgInfo.height;
     if (tw > maxPx || th > maxPx) {
@@ -295,9 +295,10 @@ function App() {
     if (x < 0 || x >= canvasSize || y < 0 || y >= canvasSize) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const safeBrushSize = Math.min(brushSize, 3);
     const ctx = canvas.getContext('2d');
-    const halfSize = Math.floor(brushSize / 2);
-    const softHalf = Math.floor((brushSize * brushSoftness) / 200);
+    const halfSize = Math.floor(safeBrushSize / 2);
+    const softHalf = Math.floor((safeBrushSize * brushSoftness) / 200);
     for (let i = -halfSize; i <= halfSize; i++) {
       for (let j = -halfSize; j <= halfSize; j++) {
         const px = x + i;
@@ -939,7 +940,7 @@ function App() {
             ))}
           </div>
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>粗细: {brushSize}px</div>
-          <input type="range" min="1" max="50" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
+          <input type="range" min="1" max="3" value={brushSize} onChange={(e) => setBrushSize(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>硬度: {100 - brushSoftness}%</div>
           <input type="range" min="0" max="100" value={brushSoftness} onChange={(e) => setBrushSoftness(Number(e.target.value))} style={{ width: '100%', marginBottom: 8 }} />
           <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>透明度: {brushOpacity}%</div>

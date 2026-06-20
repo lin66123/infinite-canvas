@@ -241,39 +241,33 @@ app.post('/api/upload', (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, limitRow) => {
+      const dailyLimit = 2;
+      const currentCount = row?.count || 0;
+
+      if (currentCount >= dailyLimit) {
+        return res.status(403).json({ error: 'Daily upload limit reached' });
+      }
+
+      // 将像素存入画布
+      const stmt = db.prepare('INSERT INTO canvas_pixels (x, y, color) VALUES (?, ?, ?)');
+      pixels.forEach(p => {
+        if (p.x != null && p.y != null && p.color) {
+          stmt.run(Math.round(p.x), Math.round(p.y), p.color);
+        }
+      });
+      stmt.finalize((err) => {
         if (err) {
           return res.status(500).json({ error: err.message });
         }
 
-        const dailyLimit = parseInt(limitRow?.value || '2');
-        const currentCount = row?.count || 0;
-
-        if (currentCount >= dailyLimit) {
-          return res.status(403).json({ error: 'Daily upload limit reached' });
+        // 更新上传计数
+        if (row) {
+          db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
+        } else {
+          db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
         }
 
-        // 将像素存入画布
-        const stmt = db.prepare('INSERT INTO canvas_pixels (x, y, color) VALUES (?, ?, ?)');
-        pixels.forEach(p => {
-          if (p.x != null && p.y != null && p.color) {
-            stmt.run(Math.round(p.x), Math.round(p.y), p.color);
-          }
-        });
-        stmt.finalize((err) => {
-          if (err) {
-            return res.status(500).json({ error: err.message });
-          }
-
-          // 更新上传计数
-          if (row) {
-            db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
-          } else {
-            db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
-          }
-
-          res.json({ success: true, count: pixels.length });
-        });
+        res.json({ success: true, count: pixels.length });
       });
     });
     return;
@@ -293,11 +287,7 @@ app.post('/api/upload', (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      const dailyLimit = await new Promise((resolve) => {
-        db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, row) => {
-          resolve(parseInt(row?.value || '2'));
-        });
-      });
+      const dailyLimit = 2;
 
       const currentCount = row?.count || 0;
 
@@ -452,17 +442,12 @@ app.get('/api/upload/status', (req, res) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
-    
-    db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, limitRow) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      
-      res.json({
-        count: row?.count || 0,
-        limit: parseInt(limitRow?.value || '2'),
-        remaining: parseInt(limitRow?.value || '2') - (row?.count || 0)
-      });
+
+    const dailyLimit = 2;
+    res.json({
+      count: row?.count || 0,
+      limit: dailyLimit,
+      remaining: dailyLimit - (row?.count || 0)
     });
   });
 });
@@ -477,26 +462,20 @@ app.post('/api/upload/consume', (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    db.get('SELECT value FROM settings WHERE key = ?', ['daily_limit'], (err, limitRow) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+    const dailyLimit = 2;
+    const currentCount = row?.count || 0;
 
-      const dailyLimit = parseInt(limitRow?.value || '2');
-      const currentCount = row?.count || 0;
+    if (currentCount >= dailyLimit) {
+      return res.status(403).json({ error: 'Daily upload limit reached' });
+    }
 
-      if (currentCount >= dailyLimit) {
-        return res.status(403).json({ error: 'Daily upload limit reached' });
-      }
+    if (row) {
+      db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
+    } else {
+      db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
+    }
 
-      if (row) {
-        db.run('UPDATE upload_logs SET count = count + 1 WHERE ip = ? AND date = ?', [ip, today]);
-      } else {
-        db.run('INSERT INTO upload_logs (ip, date, count) VALUES (?, ?, 1)', [ip, today]);
-      }
-
-      res.json({ success: true, count: currentCount + 1, remaining: dailyLimit - currentCount - 1 });
-    });
+    res.json({ success: true, count: currentCount + 1, remaining: dailyLimit - currentCount - 1 });
   });
 });
 
