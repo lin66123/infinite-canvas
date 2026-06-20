@@ -1,23 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
-// API 地址：优先读取 URL 参数 ?api=xxx，然后读取 localStorage，最后用当前页面的 origin
-// 例如: https://你的域名.com/?api=http://localhost:3001
-// 例如: https://你的域名.com/?api=https://abc123.trycloudflare.com
+// API 地址：默认使用当前页面域名（部署到Railway即Railway，部署到本地即本地）
+// 也可以通过 ?api=xxx 临时指定（例如开发测试时）
 function getApiUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get('api');
-    if (fromUrl) {
-      localStorage.setItem('api_url', fromUrl);
-      return fromUrl.replace(/\/$/, '');
-    }
-    const fromStorage = localStorage.getItem('api_url');
-    if (fromStorage) {
-      return fromStorage.replace(/\/$/, '');
-    }
+    if (fromUrl) return fromUrl.replace(/\/$/, '');
   } catch (e) {}
-  // 默认使用当前页面的 origin（本地运行时就是本地服务器，Railway部署时就是Railway）
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       return 'http://localhost:3001';
@@ -827,34 +818,6 @@ function App() {
       {/* 右下角：操作提示 */}
       <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 50, fontSize: 11, color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.4)', padding: '4px 8px', borderRadius: 6, maxWidth: 320, textAlign: 'right' }}>
         左键画画 | 中键/右键移动 | 滚轮缩放 | 双击图片删除 | 拖动图片移动 | 手机单指画画/双指移动缩放
-      </div>
-
-      {/* 左下角：API 地址切换（本地服务器用） */}
-      <div style={{ position: 'fixed', bottom: 60, left: 16, zIndex: 50, fontSize: 11, color: 'rgba(255,255,255,0.6)', background: 'rgba(0,0,0,0.6)', padding: '8px 12px', borderRadius: 8, maxWidth: 320, border: '1px solid rgba(0,212,255,0.2)' }}>
-        <div style={{ color: '#00d4ff', fontWeight: 600, marginBottom: 4 }}>服务器: {API_URL}</div>
-        <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-          <button onClick={() => {
-            try { localStorage.removeItem('api_url'); } catch (e) {}
-            window.location.reload();
-          }} style={{ padding: '3px 8px', background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
-            默认(Railway)
-          </button>
-          <button onClick={() => {
-            try { localStorage.setItem('api_url', 'http://localhost:3001'); } catch (e) {}
-            window.location.reload();
-          }} style={{ padding: '3px 8px', background: 'rgba(0,212,255,0.15)', color: '#00d4ff', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
-            本地(localhost:3001)
-          </button>
-          <button onClick={() => {
-            const url = prompt('输入你的公网地址（例如 https://xxxxxx.trycloudflare.com ）：');
-            if (url) {
-              try { localStorage.setItem('api_url', url.replace(/\/$/, '')); } catch (e) {}
-              window.location.reload();
-            }
-          }} style={{ padding: '3px 8px', background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
-            自定义...
-          </button>
-        </div>
       </div>
 
       {/* 上传进度 */}
