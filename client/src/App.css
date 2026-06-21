@@ -27,3 +27,9 @@
   background: rgba(0, 212, 255, 0.3);
   border-color: rgba(0, 212, 255, 0.8);
 }
+
+.left-circle-btn:hover {
+  background: rgba(0, 212, 255, 0.15) !important;
+  border-color: rgba(0, 212, 255, 0.6) !important;
+  transform: scale(1.08);
+}

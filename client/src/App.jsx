@@ -102,7 +102,7 @@ function App() {
     setShowWarning(false);
   };
 
-  // 墨水动画循环
+  // 墨水动画循环：粒子受重力向下掉落
   useEffect(() => {
     const animate = () => {
       const canvas = inkCanvasRef.current;
@@ -114,11 +114,11 @@ function App() {
 
         for (let i = inkDropsRef.current.length - 1; i >= 0; i--) {
           const drop = inkDropsRef.current[i];
-          drop.progress += drop.speed;
-          drop.y = drop.y + (drop.targetY - drop.y) * drop.progress * 0.15 - 0.3;
-          drop.opacity -= 0.025;
-          drop.radius += 0.08;
-          if (drop.opacity <= 0) {
+          drop.vy += 0.15;
+          drop.y += drop.vy;
+          drop.x += drop.vx;
+          drop.opacity -= 0.03;
+          if (drop.opacity <= 0 || drop.y > canvas.height) {
             inkDropsRef.current.splice(i, 1);
             continue;
           }
@@ -126,9 +126,7 @@ function App() {
           ctx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
           ctx.fillStyle = drop.color;
           ctx.globalAlpha = Math.max(0, drop.opacity);
-          ctx.filter = 'blur(1px)';
           ctx.fill();
-          ctx.filter = 'none';
         }
         ctx.globalAlpha = 1;
       }
@@ -397,18 +395,17 @@ function App() {
     };
   }, [scale]);
 
-  // 画笔墨水滴效果：屏幕坐标
+  // 画笔墨水滴效果：屏幕坐标，粒子从画笔位置向下掉落
   const spawnInkDrops = useCallback((screenX, screenY, color) => {
-    const n = 3 + Math.floor(Math.random() * 4);
+    const n = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < n; i++) {
       inkDropsRef.current.push({
-        x: screenX + (Math.random() - 0.5) * 12,
-        y: screenY - Math.random() * 20,
-        targetY: screenY + Math.random() * 6,
-        radius: 2 + Math.random() * 3,
-        opacity: 0.6 + Math.random() * 0.3,
-        progress: 0,
-        speed: 0.04 + Math.random() * 0.03,
+        x: screenX + (Math.random() - 0.5) * 8,
+        y: screenY,
+        vy: 0.5 + Math.random() * 1.5,
+        vx: (Math.random() - 0.5) * 0.3,
+        radius: 1,
+        opacity: 0.7 + Math.random() * 0.3,
         color
       });
     }
@@ -1024,14 +1021,16 @@ function App() {
         </div>
       </div>
 
-      {/* 左上角：上传按钮 */}
-      <div style={{ position: 'fixed', top: 16, left: 16, zIndex: 50, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{
-          background: 'rgba(0, 212, 255, 0.15)', border: '1px solid rgba(0, 212, 255, 0.4)',
-          color: '#00d4ff', padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontSize: 14
-        }}>
-          <label htmlFor="upload-btn">
-            {isUploading ? '上传中...' : '📤 上传图片'}
+      {/* 左上角：圆形简约按钮组 */}
+      <div style={{ position: 'fixed', top: 16, left: 16, zIndex: 50, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <div style={{ position: 'relative' }}>
+          <label htmlFor="upload-btn" className="left-circle-btn" style={{
+            width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(0,212,255,0.4)',
+            color: '#00d4ff', cursor: 'pointer', fontSize: 18, transition: 'all 0.2s',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+          }}>
+            {isUploading ? '⏳' : '📤'}
           </label>
           <input
             type="file" accept="image/jpeg,image/png,image/gif"
@@ -1039,21 +1038,36 @@ function App() {
             id="upload-btn" disabled={isUploading}
           />
         </div>
-        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, background: 'rgba(0,0,0,0.4)', padding: '4px 12px', borderRadius: 8, textAlign: 'center' }}>
-          今日剩余: {uploadRemaining}/2
+        <div style={{
+          color: 'rgba(255,255,255,0.6)', fontSize: 10, background: 'rgba(0,0,0,0.5)',
+          padding: '3px 6px', borderRadius: 10, textAlign: 'center', whiteSpace: 'nowrap'
+        }}>
+          {uploadRemaining}/2
         </div>
-        <div style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 8, padding: 8, fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-          <div>缩放: {Math.round(scale * 100)}%</div>
-          <button onClick={resetView} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(0,212,255,0.2)', color: '#00d4ff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
-            重置视图
-          </button>
-          <button onClick={() => { fetchImages(); fetchPixels(); }} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(34, 197, 94, 0.2)', color: '#22c55e', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
-            🔄 刷新画布
-          </button>
-          <button onClick={() => setShowInkCanvas(true)} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
-            🖌️ 水墨画布
-          </button>
-        </div>
+        <button onClick={resetView} className="left-circle-btn" style={{
+          width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.15)',
+          color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: 11, transition: 'all 0.2s',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+        }} title="重置视图">
+          {Math.round(scale * 100)}%
+        </button>
+        <button onClick={() => { fetchImages(); fetchPixels(); }} className="left-circle-btn" style={{
+          width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(34,197,94,0.3)',
+          color: '#22c55e', cursor: 'pointer', fontSize: 18, transition: 'all 0.2s',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+        }} title="刷新画布">
+          🔄
+        </button>
+        <button onClick={() => setShowInkCanvas(true)} className="left-circle-btn" style={{
+          width: 48, height: 48, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(139,92,246,0.3)',
+          color: '#a78bfa', cursor: 'pointer', fontSize: 18, transition: 'all 0.2s',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)'
+        }} title="水墨画布">
+          🖌️
+        </button>
       </div>
 
       {/* 右上角：画笔 + 管理 */}
