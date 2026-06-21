@@ -5,7 +5,12 @@ import multer from 'multer';
 import sqlite3 from 'sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { readFile } from 'fs/promises';
+import * as tf from '@tensorflow/tfjs';
+import { load as nsfwjsLoad } from 'nsfwjs';
+import jpegJs from 'jpeg-js';
+import { PNG } from 'pngjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -94,6 +99,69 @@ const db = new sqlite3.Database(join(dataDir, 'canvas.db'), (err) => {
     });
   }
 });
+
+// ========== 内容安全检测 (nsfwjs) ==========
+let nsfwModelPromise = null;
+const getNsfwModel = () => {
+  if (!nsfwModelPromise) {
+    nsfwModelPromise = nsfwjsLoad()
+      .then((m) => { console.log('[Safety] nsfwjs model loaded'); return m; })
+      .catch((e) => {
+        console.error('[Safety] nsfwjs model load failed:', e.message);
+        nsfwModelPromise = null;
+        return null;
+      });
+  }
+  return nsfwModelPromise;
+};
+
+const decodeImageToTensor = async (filePath) => {
+  const ext = filePath.split('.').pop().toLowerCase();
+  const buf = await readFile(filePath);
+  let width = 0, height = 0, data = null;
+  if (ext === 'jpg' || ext === 'jpeg') {
+    const decoded = jpegJs.decode(buf, { maxMemoryUsageInMB: 512 });
+    width = decoded.width; height = decoded.height; data = decoded.data;
+  } else if (ext === 'png') {
+    const png = PNG.sync.read(buf);
+    width = png.width; height = png.height; data = png.data;
+  } else {
+    return null;
+  }
+  const numPixels = width * height;
+  const rgb = new Uint8Array(numPixels * 3);
+  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+    rgb[j] = data[i];
+    rgb[j + 1] = data[i + 1];
+    rgb[j + 2] = data[i + 2];
+  }
+  return tf.tensor3d(rgb, [height, width, 3], 'int32');
+};
+
+const checkImageSafety = async (filePath) => {
+  const model = await getNsfwModel();
+  if (!model) return { safe: true, reason: 'model_unavailable' };
+  let tensor = null;
+  try {
+    tensor = await decodeImageToTensor(filePath);
+    if (!tensor) return { safe: true, reason: 'unsupported_format' };
+    const predictions = await model.classify(tensor);
+    // categories: Drawing, Hentai, Neutral, Porn, Sexy
+    const map = {};
+    predictions.forEach((p) => { map[p.className] = p.probability; });
+    const nudeScore = (map.Porn || 0) + (map.Hentai || 0) + (map.Sexy || 0) * 0.5;
+    const threshold = 0.55;
+    if (nudeScore >= threshold) {
+      return { safe: false, reason: 'explicit_content', scores: map };
+    }
+    return { safe: true, scores: map };
+  } catch (e) {
+    console.error('[Safety] classify error:', e.message);
+    return { safe: true, reason: 'check_error' };
+  } finally {
+    if (tensor) tensor.dispose();
+  }
+};
 
 const storage = multer.diskStorage({
   destination: uploadsDir,
@@ -308,6 +376,18 @@ app.post('/api/upload', (req, res) => {
 
       if (!req.file) {
         return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      // ========== 内容安全检测 ==========
+      try {
+        const safety = await checkImageSafety(req.file.path);
+        if (!safety.safe) {
+          try { unlinkSync(req.file.path); } catch (_) {}
+          console.log('[Safety] blocked upload:', safety.reason, 'ip=' + ip);
+          return res.status(403).json({ error: 'Image rejected: contains explicit content' });
+        }
+      } catch (checkErr) {
+        console.error('[Safety] check exception:', checkErr.message);
       }
 
       const imgWidth = parseInt(req.body.width) || 200;
