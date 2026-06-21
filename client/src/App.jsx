@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
+import WarningPage from './WarningPage';
 
 // API 地址：默认使用当前页面域名（部署到Railway即Railway，部署到本地即本地）
 // 也可以通过 ?api=xxx 临时指定（例如开发测试时）
@@ -22,6 +23,15 @@ const API_URL = getApiUrl();
 function App() {
   // 画布尺寸 - 改小以提升性能
   const canvasSize = 2000;
+
+  // 警告页状态（null=loading, true=显示警告, false=进入画布）
+  const [showWarning, setShowWarning] = useState(null);
+
+  // 墨水滴粒子
+  const inkDropsRef = useRef([]);
+  const inkCanvasRef = useRef(null);
+  const inkAnimRef = useRef(null);
+  const lastMouseScreenRef = useRef({ x: 0, y: 0 });
 
   // 状态
   const [images, setImages] = useState([]);
@@ -70,6 +80,61 @@ function App() {
     distance: 0, scale: 1, centerX: 0, centerY: 0,
     offsetX: 0, offsetY: 0, twoFinger: false
   });
+
+  // 警告页检查：整点后重新弹出
+  useEffect(() => {
+    const savedHour = localStorage.getItem('canvas_warn_agree_hour');
+    const currentHour = new Date().getHours();
+    if (String(savedHour) !== String(currentHour)) {
+      setShowWarning(true);
+    } else {
+      setShowWarning(false);
+    }
+  }, []);
+
+  // 同意警告页
+  const handleWarningAgree = () => {
+    localStorage.setItem('canvas_warn_agree_hour', new Date().getHours());
+    setShowWarning(false);
+  };
+
+  // 墨水动画循环
+  useEffect(() => {
+    const animate = () => {
+      const canvas = inkCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let i = inkDropsRef.current.length - 1; i >= 0; i--) {
+          const drop = inkDropsRef.current[i];
+          drop.progress += drop.speed;
+          drop.y = drop.y + (drop.targetY - drop.y) * drop.progress * 0.15 - 0.3;
+          drop.opacity -= 0.025;
+          drop.radius += 0.08;
+          if (drop.opacity <= 0) {
+            inkDropsRef.current.splice(i, 1);
+            continue;
+          }
+          ctx.beginPath();
+          ctx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
+          ctx.fillStyle = drop.color;
+          ctx.globalAlpha = Math.max(0, drop.opacity);
+          ctx.filter = 'blur(1px)';
+          ctx.fill();
+          ctx.filter = 'none';
+        }
+        ctx.globalAlpha = 1;
+      }
+      inkAnimRef.current = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => {
+      cancelAnimationFrame(inkAnimRef.current);
+    };
+  }, []);
 
   // 初始化
   useEffect(() => {
@@ -328,6 +393,23 @@ function App() {
     };
   }, [scale]);
 
+  // 画笔墨水滴效果：屏幕坐标
+  const spawnInkDrops = useCallback((screenX, screenY, color) => {
+    const n = 3 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) {
+      inkDropsRef.current.push({
+        x: screenX + (Math.random() - 0.5) * 12,
+        y: screenY - Math.random() * 20,
+        targetY: screenY + Math.random() * 6,
+        radius: 2 + Math.random() * 3,
+        opacity: 0.6 + Math.random() * 0.3,
+        progress: 0,
+        speed: 0.04 + Math.random() * 0.03,
+        color
+      });
+    }
+  }, []);
+
   // 画画
   const drawPixel = useCallback((x, y) => {
     if (x < 0 || x >= canvasSize || y < 0 || y >= canvasSize) return;
@@ -363,7 +445,13 @@ function App() {
       setLastSaveTime(now);
       flushPixels();
     }
-  }, [brushColor, brushSize, brushSoftness, brushOpacity, canvasSize, lastSaveTime]);
+
+    // 墨水滴：从画笔落点向上溅起
+    const w = window.innerWidth, h = window.innerHeight;
+    const sx = (w - canvasSize * scale) / 2 + offset.x + x * scale;
+    const sy = (h - canvasSize * scale) / 2 + offset.y + y * scale;
+    spawnInkDrops(sx, sy, brushColor);
+  }, [brushColor, brushSize, brushSoftness, brushOpacity, canvasSize, lastSaveTime, scale, offset, spawnInkDrops]);
 
   const flushPixels = async () => {
     if (pendingPixels.current.length === 0) return;
@@ -783,8 +871,20 @@ function App() {
   const getImageUrl = (filename) => API_URL + '/uploads/' + filename;
   const resetView = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
 
+  if (showWarning === null) return <div style={{position:'fixed',inset:0,background:'#f5f0e6',display:'flex',alignItems:'center',justifyContent:'center',color:'#888',fontSize:18}}>加载中...</div>;
+
+  if (showWarning === true) {
+    return (
+      <>
+        <canvas ref={inkCanvasRef} style={{position:'fixed',inset:0,zIndex:9999,pointerEvents:'none'}} />
+        <WarningPage onAgree={handleWarningAgree} />
+      </>
+    );
+  }
+
   return (
     <div className="relative w-full h-full touch-none select-none" style={{ overflow: 'hidden' }}>
+      <canvas ref={inkCanvasRef} style={{position:'fixed',inset:0,zIndex:9999,pointerEvents:'none'}} />
       <div
         ref={containerRef}
         onDragOver={handleDragOver}
