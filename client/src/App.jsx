@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import WarningPage from './WarningPage';
+import InkCanvas from './InkCanvas';
 
 // API 地址：默认使用当前页面域名（部署到Railway即Railway，部署到本地即本地）
 // 也可以通过 ?api=xxx 临时指定（例如开发测试时）
@@ -26,6 +27,9 @@ function App() {
 
   // 警告页状态（null=loading, true=显示警告, false=进入画布）
   const [showWarning, setShowWarning] = useState(null);
+
+  // 水墨画布状态
+  const [showInkCanvas, setShowInkCanvas] = useState(false);
 
   // 墨水滴粒子
   const inkDropsRef = useRef([]);
@@ -1046,6 +1050,9 @@ function App() {
           <button onClick={() => { fetchImages(); fetchPixels(); }} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(34, 197, 94, 0.2)', color: '#22c55e', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
             🔄 刷新画布
           </button>
+          <button onClick={() => setShowInkCanvas(true)} style={{ marginTop: 4, width: '100%', padding: '4px 8px', background: 'rgba(139, 92, 246, 0.2)', color: '#a78bfa', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>
+            🖌️ 水墨画布
+          </button>
         </div>
       </div>
 
@@ -1281,6 +1288,9 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* 水墨画布 */}
+      {showInkCanvas && <InkCanvas onClose={() => setShowInkCanvas(false)} />}
     </div>
   );
 }

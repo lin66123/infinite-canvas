@@ -183,12 +183,13 @@ export default function WarningPage({ onAgree }) {
       {/* 警示内容 */}
       <div className="warn-modal" style={{
         position: 'fixed', inset: 0, zIndex: 10,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        padding: '30px 24px',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start',
+        padding: '30px 24px 60px',
         border: '2px solid #d92121',
         background: 'rgba(255, 255, 255, 0.96)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
-        overflowY: 'auto'
+        overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch'
       }}>
         <div style={{ maxWidth: 700, width: '100%' }}>
         <h1 style={{
