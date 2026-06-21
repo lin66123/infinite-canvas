@@ -7,6 +7,12 @@ export default function InkCanvas({ onClose }) {
   const [color, setColor] = useState('#333333');
   const [size, setSize] = useState(15);
   const [opacity, setOpacity] = useState(0.6);
+  const colorRef = useRef(color);
+  const sizeRef = useRef(size);
+  const opacityRef = useRef(opacity);
+  useEffect(() => { colorRef.current = color; }, [color]);
+  useEffect(() => { sizeRef.current = size; }, [size]);
+  useEffect(() => { opacityRef.current = opacity; }, [opacity]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -151,8 +157,8 @@ export default function InkCanvas({ onClose }) {
         lastX = pos.x;
         lastY = pos.y;
         lastTime = Date.now();
-        drawInkStroke(pos.x, pos.y, pos.x, pos.y, 0, color, size, opacity);
-        spawnParticles(pos.x, pos.y, 3, color, size);
+        drawInkStroke(pos.x, pos.y, pos.x, pos.y, 0, colorRef.current, sizeRef.current, opacityRef.current);
+        spawnParticles(pos.x, pos.y, 3, colorRef.current, sizeRef.current);
       }
     };
 
@@ -171,9 +177,9 @@ export default function InkCanvas({ onClose }) {
         const dt = now - lastTime;
         const dist = Math.hypot(pos.x - lastX, pos.y - lastY);
         const speed = dist / (dt / 16);
-        drawInkStroke(lastX, lastY, pos.x, pos.y, speed, color, size, opacity);
+        drawInkStroke(lastX, lastY, pos.x, pos.y, speed, colorRef.current, sizeRef.current, opacityRef.current);
         const particleCount = Math.min(5, Math.floor(speed * 0.5) + 1);
-        spawnParticles(pos.x, pos.y, particleCount, color, size);
+        spawnParticles(pos.x, pos.y, particleCount, colorRef.current, sizeRef.current);
         lastX = pos.x;
         lastY = pos.y;
         lastTime = now;
@@ -216,8 +222,8 @@ export default function InkCanvas({ onClose }) {
         lastTouchX = pos.x;
         lastTouchY = pos.y;
         lastTouchTime = Date.now();
-        drawInkStroke(pos.x, pos.y, pos.x, pos.y, 0, color, size, opacity);
-        spawnParticles(pos.x, pos.y, 3, color, size);
+        drawInkStroke(pos.x, pos.y, pos.x, pos.y, 0, colorRef.current, sizeRef.current, opacityRef.current);
+        spawnParticles(pos.x, pos.y, 3, colorRef.current, sizeRef.current);
       } else if (e.touches.length === 2) {
         isDrawing = false;
         isPanning = true;
@@ -241,9 +247,9 @@ export default function InkCanvas({ onClose }) {
         const dt = now - lastTouchTime;
         const dist = Math.hypot(pos.x - lastTouchX, pos.y - lastTouchY);
         const speed = dist / (dt / 16);
-        drawInkStroke(lastTouchX, lastTouchY, pos.x, pos.y, speed, color, size, opacity);
+        drawInkStroke(lastTouchX, lastTouchY, pos.x, pos.y, speed, colorRef.current, sizeRef.current, opacityRef.current);
         const particleCount = Math.min(5, Math.floor(speed * 0.5) + 1);
-        spawnParticles(pos.x, pos.y, particleCount, color, size);
+        spawnParticles(pos.x, pos.y, particleCount, colorRef.current, sizeRef.current);
         lastTouchX = pos.x;
         lastTouchY = pos.y;
         lastTouchTime = now;
@@ -313,7 +319,7 @@ export default function InkCanvas({ onClose }) {
       wrapper.removeEventListener('touchend', onTouchEnd);
       wrapper.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [color, size, opacity]);
+  }, []);
 
   const clearCanvas = () => {
     const ctx = mainCanvasRef.current?.getContext('2d');

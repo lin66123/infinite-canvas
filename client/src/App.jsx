@@ -450,10 +450,10 @@ function App() {
       flushPixels();
     }
 
-    // 墨水滴：从画笔落点向上溅起
-    const w = window.innerWidth, h = window.innerHeight;
-    const sx = (w - canvasSize * scale) / 2 + offset.x + x * scale;
-    const sy = (h - canvasSize * scale) / 2 + offset.y + y * scale;
+    // 墨水滴：用画布实际边界计算屏幕坐标
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const sx = rect ? rect.left + x * scale : 0;
+    const sy = rect ? rect.top + y * scale : 0;
     spawnInkDrops(sx, sy, brushColor);
   }, [brushColor, brushSize, brushSoftness, brushOpacity, canvasSize, lastSaveTime, scale, offset, spawnInkDrops]);
 
